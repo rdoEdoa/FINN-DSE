@@ -390,14 +390,8 @@ def compute_objective(metrics, objective):
 
     # Bottleneck utilisation = the most-used resource
     bottleneck = max(lut_u, dsp_u, bram_u, ff_u)
-
-    if objective == "lut":
-        return lut_u + util_penalty
-
-    elif objective == "lut_slack":
-        return lut_u + timing_penalty + util_penalty
-
-    elif objective == "throughput":
+    
+    if objective == "throughput":
         if tp <= 0:
             return PENALTY_HARD
         return -tp + fail_penalty
