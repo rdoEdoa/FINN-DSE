@@ -1,0 +1,10 @@
+# Ignore the produced files
+dataset*
+raytune*
+
+# Ignore cache folders
+__pycache__
+
+# Ignore hidden files except itself
+.*
+!.gitignore
