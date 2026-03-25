@@ -1,6 +1,6 @@
-# Workflow
+# Design Space Exploration of the FINN folding parameters with RayTune
 
-## Prerequisites
+## Workflow on the server - Prerequisites and setup
 
 The full workflow will take place inside a working FINN container. Make sure it is available before starting.
 
