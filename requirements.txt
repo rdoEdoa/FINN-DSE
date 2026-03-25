@@ -1,0 +1,30 @@
+# --- Core Frameworks (PyTorch 2.1.x per compatibilità Brevitas) ---
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
+
+# --- Brevitas (Versione stabile per export QONNX) ---
+brevitas==0.10.2
+
+# --- ONNX Ecosystem (Versioni bloccate per evitare conflitti) ---
+onnx==1.14.1
+onnxruntime==1.16.3
+onnxoptimizer>=0.3.13
+qonnx
+
+# --- Graph Conversion & GNN ---
+torch_geometric>=2.4.0
+numpy<2
+
+# --- Utilities & Visualization ---
+tqdm
+networkx
+matplotlib
+scikit-learn
+pandas
+
+# --- RayTune ---
+ray
+ray[tune]
+optuna
+nevergrad
