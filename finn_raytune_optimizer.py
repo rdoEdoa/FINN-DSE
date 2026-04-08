@@ -246,8 +246,7 @@ def build_search_space(baseline: Dict[str, Any]) -> Dict[str, Any]:
 
     Deduplicates _hls_ / _rtl_ variants so each physical layer contributes
     exactly one PE and one SIMD hyperparameter. Valid choices are computed
-    from MH and MW stored in the baseline config so only legal values are
-    ever offered to the search algorithm.
+    dynamically as all exact integer divisors of MH and MW.
     """
     # Collect one representative config per logical layer
     # (prefer _hls_ if both are present)
@@ -271,23 +270,35 @@ def build_search_space(baseline: Dict[str, Any]) -> Dict[str, Any]:
         mw = node_cfg.get("MW", None)
 
         if "PE" in node_cfg:
-            valid_pe = [v for v in VALID_PE_SIMD if mh is None or mh % v == 0]
-            if valid_pe:
+            if mh is not None:
+                # Calculate ALL integer divisors of MH
+                valid_pe = [v for v in range(1, mh + 1) if mh % v == 0]
                 space[f"{logical_name}__PE"] = tune.choice(valid_pe)
             else:
                 log.warning(
-                    "Layer %s: no valid PE found for MH=%s — skipping PE.",
-                    logical_name, mh,
+                    "Layer %s: MH is missing — skipping PE.",
+                    logical_name
                 )
 
         if "SIMD" in node_cfg:
-            valid_simd = [v for v in VALID_PE_SIMD if mw is None or mw % v == 0]
-            if valid_simd:
-                space[f"{logical_name}__SIMD"] = tune.choice(valid_simd)
+            # Determine the correct dimension to divide based on the node type
+            if "IFMChannels" in node_cfg:
+                limit_dim = node_cfg["IFMChannels"]
+            else:
+                limit_dim = node_cfg.get("MW", None)
+
+            if limit_dim is not None:
+                # Calculate ALL integer divisors of the correct limiting dimension
+                valid_simd = [v for v in range(1, limit_dim + 1) if limit_dim % v == 0]
+                
+                if valid_simd:
+                    space[f"{logical_name}__SIMD"] = tune.choice(valid_simd)
+                else:
+                    log.warning("Layer %s: no valid SIMD found.", logical_name)
             else:
                 log.warning(
-                    "Layer %s: no valid SIMD found for MW=%s — skipping SIMD.",
-                    logical_name, mw,
+                    "Layer %s: Both IFMChannels and MW are missing — skipping SIMD.",
+                    logical_name,
                 )
 
     return space
