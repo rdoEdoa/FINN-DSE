@@ -234,19 +234,21 @@ def _get_div(n: int):
     return [i for i in range(1, n + 1) if n % i == 0 and (i & (i - 1)) == 0]
 
 
-def _get_mh_mw(node, initializer_map, producer_map):
-    """Return (MH, MW) for a Conv/MatMul/Gemm node from its weight tensor."""
-    mh, mw = 1, 1
+def _get_mh_mw_ifm(node, initializer_map, producer_map):
+    """Return (MH, MW, IFMChannels) for a Conv/MatMul/Gemm node from its weight tensor."""
+    mh, mw, ifm = 1, 1, 1
     if len(node.input) > 1:
         w = _find_weights(node.input[1], initializer_map, producer_map)
         if w is not None:
             if len(w.shape) == 4:           # Conv: [OC, IC, KH, KW]
                 mh = w.shape[0]
                 mw = w.shape[1] * w.shape[2] * w.shape[3]
+                ifm = w.shape[1]            # <--- This is the IFMChannels
             elif len(w.shape) == 2:         # MatMul/Gemm: [out, in]
                 mh = w.shape[0]
                 mw = w.shape[1]
-    return max(1, mh), max(1, mw)
+                ifm = w.shape[1]            # For linear layers, IFM == MW
+    return max(1, mh), max(1, mw), max(1, ifm)
 
 
 def extract_folding_config_from_onnx(
@@ -290,11 +292,12 @@ def extract_folding_config_from_onnx(
         if node.op_type not in ("Conv", "MatMul", "Gemm"):
             continue
 
-        mh, mw = _get_mh_mw(node, initializer_map, producer_map)
+        # Use the updated function to get IFM
+        mh, mw, ifm = _get_mh_mw_ifm(node, initializer_map, producer_map)
 
         log.debug(
-            "  %s node — op=%s  MH=%d  MW=%d",
-            node.name or node.op_type, node.op_type, mh, mw,
+            "  %s node — op=%s  MH=%d  MW=%d  IFM=%d",
+            node.name or node.op_type, node.op_type, mh, mw, ifm,
         )
 
         # MVAU (matrix-vector activation unit) — both HLS and RTL variants
@@ -314,9 +317,10 @@ def extract_folding_config_from_onnx(
             for suffix in ("hls", "rtl"):
                 key = f"ConvolutionInputGenerator_{suffix}_{swg_counter}"
                 cfg[key] = {
-                    "SIMD":      1,
-                    "MW":        int(mw),
-                    "ram_style": "auto",
+                    "SIMD":        1,
+                    "MW":          int(mw),
+                    "IFMChannels": int(ifm),  
+                    "ram_style":   "auto",
                 }
             swg_counter += 1
 
@@ -431,7 +435,8 @@ def main():
         "      --baseline_cfg  %s \\\n"
         "      --build_script  full_build.py \\\n"
         "      --onnx_path     %s \\\n"
-        "      --num_samples   40 --objective lut_slack\n",
+        "      --num_samples   40 \\\n"
+        "      --objective lut_slack\n",
         out_path, onnx_path,
     )
 
