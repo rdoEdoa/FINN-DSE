@@ -46,25 +46,3 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/.python_libs/lib/python3.10/site-packages
 
 At this point, the environment is ready.
 
-## Generate the baseline folding configuration file
-First, it is necessary to generate the baseline configuration file that also contains crucial informations to generate the proper search space. To do so, run the `generate_folding_config.py` script; this script also uses informations store in the `build_config.json` file, and so it needs to be modified according to the model under test; the current file is set to work with the provided model. The following snippet works with the network provided.
-
-```sh
-python generate_folding_config.py \
-    --model_file  lenet5_quantized.py \
-    --model_class LeNet5Quantized     \
-    --config      build_config.json
-```
-
-## Run the RayTune optimization
-Once the baseline configuration file is ready, it is possible to run the optimization file that uses RayTune. The following snippet works with the provided network. It is possible to change the number of trials (`num_samples`), the search strategy (up to now, it is possible to use `optuna`, `nevergrad`, `random`) and the objective (`throughput`, `resource_avg`, `balanced`).
-
-```sh
-python finn_raytune_optimizer.py \
-    --baseline_cfg      dataset/config_files/lenet5/folding_config_baseline.json \
-    --build_script      full_build.py \
-    --onnx_path         dataset/lenet5/lenet5.onnx \
-    --num_samples       25 \
-    --search_strategy   optuna \
-    --objective         throughput
-```
