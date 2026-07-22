@@ -1,0 +1,27 @@
+{
+  "_comment": "Build configuration for ResNet50 on Alveo U250 via pre-exported ONNX",
+
+  "_section_outputs": "--- Output paths ---",
+  "output_onnx": "dataset/resnet50/resnet50.onnx",
+  "output_cfg":  "dataset/config_files/resnet50/folding_config_baseline.json",
+
+  "_section_export": "--- ONNX export settings (Ignored when using --input_onnx) ---",
+  "opset":      13,
+  "onnx_only":  false,
+
+  "_section_model": "--- Input tensor shape: [batch, channels, height, width] ---",
+  "input_shape": [1, 3, 224, 224],
+
+  "_section_finn": "--- FINN / Vivado target settings ---",
+  "board":      "U250",
+  "fpga_part":  "xcu250-figd2104-2L-e",
+  "clock_ns":   3.33,
+  "target_fps": null,
+
+  "_section_build": "--- Baseline build settings ---",
+  "build_script":     "full_build.py",
+  "baseline_timeout": 21600,
+
+  "_section_kwargs": "--- Constructor arguments (Ignored when using --input_onnx) ---",
+  "model_kwargs" : {}
+}
