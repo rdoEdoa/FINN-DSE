@@ -72,8 +72,8 @@ ONNX model ──────┘                                        │
 │   ├── boards.py                    # FPGA resource budgets
 │   ├── build.py                     # FINN subprocess + feasibility check
 │   ├── folding.py                   # Config patching/sanitizing
-│   ├── metrics.py                    # Report parsing / warm starts
-│   ├── objectives.py                 # Single and joint objectives
+│   ├── metrics.py                   # Report parsing / warm starts
+│   ├── objectives.py                # Single and joint objectives
 │   ├── trainable.py                 # Ray Tune joint trainable
 │   └── trials.py                    # CSV + thread-safe counters
 ├── models/                          # Model definitions and shipped ONNX files
