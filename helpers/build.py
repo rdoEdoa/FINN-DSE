@@ -1,11 +1,9 @@
 import json
 import logging
 import os
-import shutil
 import sys
 import subprocess
-from subprocess import PIPE, Popen
-import sys
+from subprocess import PIPE
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from helpers.metrics import collect_metrics

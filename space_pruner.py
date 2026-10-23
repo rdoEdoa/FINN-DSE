@@ -55,11 +55,6 @@ log = logging.getLogger(__name__)
 # Layer topology + mathematical space
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _split_config_key(node_name: str) -> Optional[Tuple[str, str, int]]:
-    m = re.match(r"^(.+)_(hls|rtl)_(\d+)$", node_name)
-    return (m.group(1), m.group(2), int(m.group(3))) if m else None
-
-
 def get_layer_context_and_space(
     baseline: Dict[str, Any],
 ) -> Tuple[Dict[str, dict], Dict[str, List[int]]]:

@@ -2,7 +2,7 @@ import json
 import os
 import re
 from copy import deepcopy
-from typing import Any, Dict, Mapping
+from typing import Any, Dict
 
 FINN_CONFIG_KEYS = {
     "PE", "SIMD", "ram_style", "mem_mode", "resType",

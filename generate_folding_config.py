@@ -421,13 +421,6 @@ def _find_weights(start_tensor_name, initializer_map, producer_map, max_depth=6)
                 queue.append((inp, depth + 1))
     return None
 
-
-def _get_div(n: int):
-    """Power-of-two divisors of n."""
-    n = max(1, int(n))
-    return [i for i in range(1, n + 1) if n % i == 0 and (i & (i - 1)) == 0]
-
-
 def _get_mh_mw(node, initializer_map, producer_map):
     """Return (MH, MW) for a Conv/MatMul/Gemm node from its weight tensor."""
     mh, mw = 1, 1

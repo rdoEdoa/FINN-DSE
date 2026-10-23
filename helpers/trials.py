@@ -50,14 +50,6 @@ def _increment_counter(counter_dir: str, name: str) -> int:
             fcntl.flock(lock_f, fcntl.LOCK_UN)
     return n
 
-
-def _read_counter(counter_dir: str, name: str) -> int:
-    path = os.path.join(counter_dir, f".counter_{name}")
-    try:
-        return int(open(path).read().strip())
-    except Exception:
-        return 0
-
 def _append_to_csv(
     csv_path: str,
     trial_name: str,

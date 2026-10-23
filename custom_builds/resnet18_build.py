@@ -358,18 +358,6 @@ def main():
         # NO INTERCEPTOR: Pass original file directly to ModelWrapper
         model = ModelWrapper(original_model_file)
         
-        # DEBUG THING -----------------------------------------------
-        for n in model.graph.node:
-            if n.op_type == "FloatQuant":
-                print(n.name)
-                print(" inputs:", list(n.input))
-                for i, inp in enumerate(n.input):
-                    init = model.get_initializer(inp)
-                    print(f"   [{i}] '{inp}' -> initializer present: {init is not None}")
-                print(" attrs:", {a.name: a for a in n.attribute})
-                print()
-        # -----------------------------------------------------------
-        
         print("Create build configuration...")
         cfg = create_build_config(output_dir, folding_config_path, estimate_only=args.estimate_only)
         build_steps = get_build_steps(estimate_only=args.estimate_only)

@@ -37,13 +37,10 @@ import csv
 import json
 import logging
 import os
-import re
-import subprocess
 import sys
 import time
-from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import ray
 from ray import tune
@@ -53,12 +50,11 @@ from ray.tune.search.optuna import OptunaSearch
 
 # Import the custom helpers
 from helpers.boards import BOARDS, DEFAULT_BOARD, board_arg
-from helpers.metrics import collect_metrics, get_joint_warm_start_points
-from helpers.objectives import compute_objective
+from helpers.metrics import get_joint_warm_start_points
 from helpers.trials import _append_to_csv, _dedup_model_keys
 from helpers.trainable import make_joint_trainable
 from helpers.folding import patch_folding_config, save_folding_config
-from helpers.build import run_finn_build, run_feasibility_check, call_pruner
+from helpers.build import run_feasibility_check, call_pruner
 
 import threading
 from ray.tune import register_trainable
