@@ -33,8 +33,8 @@ ONNX model ──────┘                                        │
                                                           │
                        ┌──────────────────────────────────┴─────────────────┐
                        ▼                                                    ▼
-          folding_config_best_<strategy>.json              LLM pruning rounds
-                                                          (AI tuner only)
+          folding_config_best_<strategy>.json                       LLM pruning rounds
+                                                                      (AI tuner only)
 ```
 
 1. **Baseline generation** parses the ONNX weight tensors to recover each
