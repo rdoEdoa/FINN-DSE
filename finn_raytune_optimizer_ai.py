@@ -253,7 +253,7 @@ def parse_args():
                    default="Maximise throughput while minimising resource usage.",
                    help="Natural language constraints passed to space_pruner")
     p.add_argument("--parallelism_threshold", type=int, default=1000000)
-    p.add_argument("--groq_api_key",   default=None,
+    p.add_argument("--api_key",   default=None,
                    help="API key")
     p.add_argument("--prune_on_start", action="store_true",
                    help="Call space_pruner once before the first round")
@@ -398,7 +398,7 @@ def main():
     if args.prune_on_start or any(not Path(m["pruned_space_path"]).exists() for m in models.values()):
         log.info("═══ Initial pruning (round 0) ═══")
         call_pruner(models, args.constraints, pruning_round=0,
-                    api_key=args.groq_api_key, include_results=False)
+                    api_key=args.api_key, include_results=False)
         pruning_round += 1
     
     # ── Round-based execution loop ─────────────────────────────────────────
@@ -465,7 +465,7 @@ def main():
 
         if trials_done < total_samples:
             log.info("═══ Calling pruner (round %d, %d trials done) ═══", pruning_round, trials_done)
-            call_pruner(models, args.constraints, pruning_round, args.groq_api_key, include_results=True)
+            call_pruner(models, args.constraints, pruning_round, args.api_key, include_results=True)
 
             for key, m in models.items():
                 rows = []
