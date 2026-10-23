@@ -28,3 +28,8 @@ ray
 ray[tune]
 optuna
 nevergrad
+
+# --- OpenAI ---
+OpenAI
+python-dotenv
+certifi

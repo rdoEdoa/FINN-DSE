@@ -162,13 +162,6 @@ pip install --user -r requirements.txt
 export PYTHONPATH=$PYTHONPATH:$(pwd)/.python_libs/lib/python3.10/site-packages
 ```
 
-The LLM pruner needs three additional packages that are not in
-`requirements.txt`:
-
-```sh
-pip install --user openai certifi python-dotenv
-```
-
 Run all commands **from the repository root** — runtime paths are relative to
 it.
 
