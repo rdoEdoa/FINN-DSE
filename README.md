@@ -375,6 +375,8 @@ Boards available to the AI tuner via `--board` (`helpers/boards.py`):
 `XC7S25`, `XC7S25-65`, `Zynq-7010`, `Zynq-7015`, `Zynq-7020`, `Zynq-7030`,
 `ZU3EG`, `U250`.
 
+`XC7S25-65` is the `XC7S25` using only 65% of the available resources.
+
 Models with an ONNX shipped in `models/`:
 
 | Model | ONNX | Build config | Build script |
