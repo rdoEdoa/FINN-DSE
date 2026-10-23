@@ -1,7 +1,8 @@
 # Ignore the produced files
 dataset*
 raytune*
-
+# Ignore helper files
+AGENTS.md
 # Ignore cache folders
 __pycache__
 
