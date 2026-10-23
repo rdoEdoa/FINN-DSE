@@ -25,8 +25,8 @@
   "_section_kwargs": "--- Constructor arguments forwarded to your model class ---",
   "model_kwargs": {
     "num_classes":      10,
-    "weight_bit_width": 2,
-    "act_bit_width":    2,
+    "weight_bit_width": 1,
+    "act_bit_width":    1,
     "inp_bit_width":    8,
     "in_channels":      3
 }
