@@ -252,7 +252,6 @@ def parse_args():
     p.add_argument("--constraints",    type=str,
                    default="Maximise throughput while minimising resource usage.",
                    help="Natural language constraints passed to space_pruner")
-    p.add_argument("--parallelism_threshold", type=int, default=1000000)
     p.add_argument("--api_key",   default=None,
                    help="API key")
     p.add_argument("--prune_on_start", action="store_true",
@@ -433,7 +432,7 @@ def main():
             instance_counts=instance_counts,
             objective=args.objective, search_strategy=args.search_strategy,
             build_timeout=args.build_timeout, extra_build_args=args.extra_build_args,
-            parallelism_threshold=args.parallelism_threshold, joint_root=joint_root,
+            joint_root=joint_root,
             single_network=single_network,
             device=DEVICE,
         )

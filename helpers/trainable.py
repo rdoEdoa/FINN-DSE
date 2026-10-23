@@ -42,7 +42,6 @@ def make_joint_trainable(
     search_strategy: str,
     build_timeout: int,
     extra_build_args: list,
-    parallelism_threshold: int,
     joint_root: str,
     device: Mapping[str, float],
     single_network: bool = False,
