@@ -2,6 +2,7 @@
 dataset*
 raytune*
 # Ignore helper files
+NOTES.md
 AGENTS.md
 # Ignore cache folders
 __pycache__
