@@ -384,7 +384,7 @@ Models with an ONNX shipped in `models/`:
 | `mlp_w2a2` | yes | yes | yes |
 | `resnet50` | yes | yes | yes |
 | `cnv_w2a2` | no — export from `models/cnv.py` | yes | yes |
-| `resnet18` | no — needs an external ONNX | yes | yes |
+| `resnet18` | yes | yes | yes |
 
 To generate `cnv_w2a2`, run the baseline generator with `--model_file
 models/cnv.py --model_class CNV --config
