@@ -223,7 +223,6 @@ python finn_raytune_optimizer_ai.py \
 | `--objective` | `throughput`, `resource_avg`, or `balanced`. |
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
 | `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
-| `--parallelism_threshold` | Skip builds whose summed PE+SIMD exceeds this value. |
 | `--database_dir` | Folder of pre-built configs to reuse instead of rebuilding. |
 | `--ray_address` | Connect to an existing Ray cluster. |
 | `--extra_build_args` | Verbatim arguments forwarded to the build script. **Must be last.** |
@@ -263,7 +262,6 @@ python finn_raytune_optimizer_ai.py \
 | `--constraints` | Natural-language goal passed to the LLM pruner. |
 | `--prune_on_start` | Run the pruner once before the first round. |
 | `--api_key` | API key forwarded to the pruner (despite the name, this is the **Cerebras** key, unless the provider is changed inside the script). |
-| `--parallelism_threshold` | Skip builds above this summed PE+SIMD (default `1000000`). |
 | `--extra_build_args` | Verbatim arguments forwarded to the build scripts. **Must be last.** |
 
 Before the first round, the AI tuner runs an **all-PE/SIMD=1 feasibility build**
