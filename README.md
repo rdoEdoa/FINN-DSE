@@ -11,7 +11,6 @@ The toolchain has four entry points:
 | Script | Purpose |
 | --- | --- |
 | `generate_folding_config.py` | Export a Brevitas/PyTorch model (or ingest an ONNX) and generate a baseline `PE=1, SIMD=1` folding config. |
-| `finn_raytune_optimizer.py` | Single-model PE/SIMD search with Ray Tune (Optuna, random, Nevergrad, HyperOpt). |
 | `finn_raytune_optimizer_ai.py` | Multi-model joint search with adaptive, LLM-driven space pruning. |
 | `space_pruner.py` | Standalone LLM pruner that shrinks the PE/SIMD search space from the baseline topology. |
 
@@ -60,7 +59,6 @@ ONNX model ──────┘                                        │
 ```
 .
 ├── generate_folding_config.py       # Baseline folding-config generator
-├── finn_raytune_optimizer.py        # Single-model Ray Tune tuner
 ├── finn_raytune_optimizer_ai.py     # Multi-model tuner + LLM pruning
 ├── space_pruner.py                  # LLM design-space pruner
 ├── build_config.template.json       # Template for model build configs
