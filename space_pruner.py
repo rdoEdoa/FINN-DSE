@@ -290,7 +290,6 @@ You MUST return ONLY a valid JSON object matching this exact schema:
         "total": response.usage.total_tokens
     }
 
-    # NEW------------------
     choice = response.choices[0]
     message = choice.message
 
@@ -312,7 +311,7 @@ You MUST return ONLY a valid JSON object matching this exact schema:
         )
 
     raw = safe_json_parse(message.content)
-    # END_NEW--------------
+
     pruned  = raw.get("pruned_space", raw)   # fallback: treat entire response as space
     reasoning = raw.get("reasoning", "No reasoning provided.")
     return pruned, reasoning, usage

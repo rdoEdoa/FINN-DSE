@@ -113,8 +113,7 @@ def load_build_config(config_path: Optional[str]) -> Dict[str, Any]:
 # Model loading
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Known kwarg aliases: maps your standard JSON keys to common alternative
-# parameter names used in third-party repos.
+# Known kwarg aliases: maps your standard JSON keys to common alternative parameter names used in third-party repos.
 _KWARG_ALIASES = {
     "num_classes":      ["num_classes", "n_classes", "classes"],
     "weight_bit_width": ["weight_bit_width", "weight_bit", "wbits", "w_bits"],
@@ -446,7 +445,6 @@ def extract_folding_config_from_onnx(
 ) -> Dict[str, Any]:
     """
     Parse the exported ONNX and build a baseline folding config with PE=1 / SIMD=1.
-    Uses the clean Universal Naming format (e.g., MVAU_0).
     """
     log.info("Parsing ONNX graph: %s", onnx_path)
     model = onnx.load(onnx_path)
@@ -477,7 +475,7 @@ def extract_folding_config_from_onnx(
             node.name or node.op_type, node.op_type, mh, mw,
         )
 
-        # MVAU — Clean Universal Name
+        # MVAU
         key = f"MVAU_{mva_counter}"
         layer_dict = {
             "PE":        1,
@@ -494,7 +492,7 @@ def extract_folding_config_from_onnx(
             
         cfg[key] = layer_dict
 
-        # ConvolutionInputGenerator — Clean Universal Name
+        # ConvolutionInputGenerator
         if node.op_type == "Conv":
             in_channels = 1
             if len(node.input) > 1:
@@ -506,7 +504,7 @@ def extract_folding_config_from_onnx(
             cfg[swg_key] = {
                 "SIMD":        1,
                 "MW":          int(mw),
-                "IFMChannels": in_channels, # Added for your Universal pruner
+                "IFMChannels": in_channels,
                 "inp_channels": in_channels,
                 "ram_style":   "auto",
             }
@@ -570,7 +568,7 @@ def parse_args():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # ── Input: mutually exclusive — either a Python model or a pre-built ONNX
+    # - Input: mutually exclusive - either a Python model or a pre-built ONNX
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument(
         "--model_file",
