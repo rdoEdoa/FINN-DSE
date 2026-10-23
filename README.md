@@ -62,7 +62,7 @@ ONNX model ──────┘                                        │
 ├── generate_folding_config.py       # Baseline folding-config generator
 ├── finn_raytune_optimizer.py        # Single-model Ray Tune tuner
 ├── finn_raytune_optimizer_ai.py     # Multi-model tuner + LLM pruning
-├── space_pruner.py                  # LLM design-space pruner (Cerebras)
+├── space_pruner.py                  # LLM design-space pruner
 ├── build_config.template.json       # Template for model build configs
 ├── build_configs/                   # Per-model build configuration
 │   └── <model>_build_config.json
@@ -267,7 +267,7 @@ python finn_raytune_optimizer_ai.py \
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
 | `--constraints` | Natural-language goal passed to the LLM pruner. |
 | `--prune_on_start` | Run the pruner once before the first round. |
-| `--groq_api_key` | API key forwarded to the pruner (despite the name, this is the **Cerebras** key). |
+| `--api_key` | API key forwarded to the pruner (despite the name, this is the **Cerebras** key, unless the provider is changed inside the script). |
 | `--parallelism_threshold` | Skip builds above this summed PE+SIMD (default `1000000`). |
 | `--extra_build_args` | Verbatim arguments forwarded to the build scripts. **Must be last.** |
 
@@ -293,7 +293,7 @@ python space_pruner.py \
 Optional: `--results_csv <csv>` lets the LLM reason about past trials, and
 `--model <name>` selects the LLM (default `qwen-3.8-27b`).
 
-The pruner needs a Cerebras API key, supplied via `--api_key` or the
+The pruner needs a Cerebras API key (or any other API Key, is the provider is manually changed inside the script), supplied via `--api_key` or the
 `CEREBRAS_API_KEY` environment variable (a local `.env` is loaded when
 `python-dotenv` is installed). It reads layer topology and the build config,
 computes all valid `PE`/`SIMD` divisors, asks the LLM to select a subset, and
@@ -417,8 +417,7 @@ The joint tuner writes final best configs for each model to its own
   explicit paths.
 - **Feasibility check fails** — the model does not fit the selected board even
   at `PE=1, SIMD=1`; choose a larger board or reduce the model.
-- **"No API key found"** — export `CEREBRAS_API_KEY` or pass `--api_key` /
-  `--groq_api_key`. Install `openai`, `certifi`, and optionally
+- **"No API key found"** — export `CEREBRAS_API_KEY` or pass `--api_key`. Install `openai`, `certifi`, and optionally
   `python-dotenv`.
 - **Pre-expanded baseline rejected** — feed the tuners logical baselines
   (`MVAU_0`), not configs that already contain `MVAU_hls_0` / `MVAU_rtl_0`;
