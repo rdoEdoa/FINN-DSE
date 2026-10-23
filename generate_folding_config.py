@@ -28,9 +28,13 @@ This matches exactly what full_build.py expects.
 Usage
 ─────
     python generate_folding_config.py \
-        --model_file  lenet5_quantized.py \
-        --model_class LeNet5Quantized     \
-        --config      build_config.json
+        --model_file  models/cnv_w2a2.py \
+        --model_class CNV     \
+        --config      build_configs/cnv_w2a2_build_config.json
+
+    python generate_folding_config.py \
+        --onnx_file   models/cnv_w1a1.onnx \
+        --config      build_configs/cnv_w1a1_build_config.json
 """
 
 import argparse
@@ -40,6 +44,7 @@ import json
 import logging
 import os
 import sys
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -108,38 +113,210 @@ def load_build_config(config_path: Optional[str]) -> Dict[str, Any]:
 # Model loading
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Known kwarg aliases: maps your standard JSON keys to common alternative
+# parameter names used in third-party repos.
+_KWARG_ALIASES = {
+    "num_classes":      ["num_classes", "n_classes", "classes"],
+    "weight_bit_width": ["weight_bit_width", "weight_bit", "wbits", "w_bits"],
+    "act_bit_width":    ["act_bit_width", "act_bit", "abits", "a_bits"],
+    "inp_bit_width":    ["inp_bit_width", "in_bit_width", "input_bit_width",
+                         "in_bit", "inp_bit"],
+    "in_channels":      ["in_channels", "in_ch", "input_channels",
+                         "input_ch", "n_channels"],
+}
+
+def _remap_kwargs(
+    model_kwargs: Dict[str, Any],
+    target_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Remap model_kwargs to match the actual parameter names of a constructor.
+
+    Strategy:
+      1. Keep any key that already matches a parameter name exactly.
+      2. For remaining keys, try each known alias — use the first that matches.
+      3. Drop any key that has no matching parameter (with a warning).
+    """
+    remapped = {}
+    for json_key, value in model_kwargs.items():
+        if json_key in target_params:
+            remapped[json_key] = value
+            continue
+        # Try aliases
+        aliases = _KWARG_ALIASES.get(json_key, [])
+        matched = next((a for a in aliases if a in target_params), None)
+        if matched:
+            log.info("  kwarg '%s' → remapped to '%s'", json_key, matched)
+            remapped[matched] = value
+        else:
+            log.warning(
+                "  kwarg '%s' has no matching parameter in constructor — skipping.",
+                json_key,
+            )
+    return remapped
+
+
+def _try_instantiate(target, model_kwargs: Dict[str, Any]):
+    """
+    Try to instantiate `target` with the provided kwargs, falling back
+    gracefully through three strategies:
+
+      1. Direct kwargs             — works for well-behaved models
+      2. Remapped kwargs           — works for repos with different param names
+      3. Only matching kwargs      — drops unknown keys, uses constructor defaults
+    """
+    sig = inspect.signature(target.__init__)
+    params = {
+        k: v for k, v in sig.parameters.items()
+        if k not in ("self", "args", "kwargs")
+    }
+
+    # Strategy 1: direct
+    try:
+        return target(**model_kwargs)
+    except TypeError as e1:
+        log.debug("Direct kwargs failed: %s", e1)
+
+    # Strategy 2: remap aliases
+    remapped = _remap_kwargs(model_kwargs, params)
+    try:
+        return target(**remapped)
+    except TypeError as e2:
+        log.debug("Remapped kwargs failed: %s", e2)
+
+    # Strategy 3: keep only params the constructor actually accepts
+    safe_kwargs = {k: v for k, v in remapped.items() if k in params}
+    skipped = set(model_kwargs.keys()) - set(safe_kwargs.keys())
+    if skipped:
+        log.warning(
+            "Instantiating with reduced kwargs (skipped: %s). "
+            "Constructor defaults will be used for missing params.",
+            sorted(skipped),
+        )
+    return target(**safe_kwargs)
+
+
+def _load_module_with_package(model_path: Path):
+    """
+    Load a Python file as a module. If it uses relative imports (i.e. it is
+    part of a package), add its parent directory to sys.path so the imports
+    resolve correctly.
+    """
+    parent = str(model_path.parent)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+        added_to_path = True
+    else:
+        added_to_path = False
+
+    # Try as a package member first (handles relative imports like `from .common import`)
+    package_name = model_path.parent.name
+    module_name  = model_path.stem
+    try:
+        import importlib
+        full_name = f"{package_name}.{module_name}"
+        mod = importlib.import_module(full_name)
+        log.debug("Loaded as package member: %s", full_name)
+        return mod
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    # Fall back to standalone file loading
+    spec = importlib.util.spec_from_file_location("_user_model", model_path)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def load_model_from_file(
     model_file: str,
     model_class: Optional[str],
     model_kwargs: Dict[str, Any],
 ) -> torch.nn.Module:
+    """
+    Load a PyTorch/Brevitas model from a Python file and instantiate it.
+
+    Handles:
+      - Models with a get_model(**kwargs) / build_model / create_model factory
+      - Models with a class constructor that uses standard kwargs
+      - Models from third-party repos with different parameter names
+        (remapped via _KWARG_ALIASES)
+      - Models that are part of a package (relative imports resolved
+        by adding the parent directory to sys.path)
+    """
     model_path = Path(model_file).resolve()
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {model_path}")
 
-    spec = importlib.util.spec_from_file_location("_user_model", model_path)
-    mod  = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_module_with_package(model_path)
 
+    # ── 1. Explicit class name given ──────────────────────────────────────
     if model_class:
         target = getattr(mod, model_class, None)
         if target is None:
             raise AttributeError(f"Class '{model_class}' not found in {model_file}.")
-    else:
-        for fname in ("get_model", "build_model", "create_model"):
-            if hasattr(mod, fname) and callable(getattr(mod, fname)):
-                return getattr(mod, fname)(**model_kwargs)
-        target = None
-        for name, obj in inspect.getmembers(mod, inspect.isclass):
-            if issubclass(obj, torch.nn.Module) and obj is not torch.nn.Module:
-                target = obj
-                break
-        if target is None:
-            raise RuntimeError(f"No nn.Module subclass found in {model_file}.")
+        model = _try_instantiate(target, model_kwargs)
+        model.eval()
+        return model
 
-    model = target(**model_kwargs)
+    # ── 2. Look for standard factory functions ────────────────────────────
+    for fname in ("get_model", "build_model", "create_model"):
+        fn = getattr(mod, fname, None)
+        if fn and callable(fn):
+            try:
+                log.info("Using factory function: %s()", fname)
+                model = fn(**model_kwargs)
+                model.eval()
+                return model
+            except TypeError:
+                # Factory may have different param names — try remapping
+                sig    = inspect.signature(fn)
+                params = {k: v for k, v in sig.parameters.items()
+                          if k not in ("self", "args", "kwargs")}
+                remapped = _remap_kwargs(model_kwargs, params)
+                try:
+                    model = fn(**remapped)
+                    model.eval()
+                    return model
+                except TypeError as e:
+                    log.debug("Factory %s failed even after remapping: %s", fname, e)
+
+    # ── 3. Find any nn.Module subclass in the file ────────────────────────
+    candidates = [
+        obj for name, obj in inspect.getmembers(mod, inspect.isclass)
+        if issubclass(obj, torch.nn.Module)
+        and obj is not torch.nn.Module
+        and obj.__module__ == getattr(mod, "__name__", "_user_model")
+    ]
+
+    if not candidates:
+        # Widen search - include any nn.Module subclass visible in the module
+        candidates = [
+            obj for name, obj in inspect.getmembers(mod, inspect.isclass)
+            if issubclass(obj, torch.nn.Module) and obj is not torch.nn.Module
+        ]
+
+    if not candidates:
+        raise RuntimeError(
+            f"No nn.Module subclass found in {model_file}. "
+            "Use --model_class to specify the class name explicitly."
+        )
+
+    if len(candidates) > 1:
+        log.warning(
+            "Multiple nn.Module subclasses found: %s. "
+            "Using the first one: %s. "
+            "Use --model_class to specify explicitly.",
+            [c.__name__ for c in candidates],
+            candidates[0].__name__,
+        )
+
+    target = candidates[0]
+    log.info("Auto-detected model class: %s", target.__name__)
+    model = _try_instantiate(target, model_kwargs)
     model.eval()
     return model
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +386,23 @@ def export_to_onnx(
 # ONNX graph parsing  (same logic as your config-generation script)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def stage_onnx_into_dataset(onnx_src: str, build_cfg: Dict[str, Any]) -> str:
+    """Copy a pre-built ONNX to the location export_to_onnx() would have written it to."""
+    src = Path(onnx_src).resolve()
+    raw = build_cfg.get("output_onnx")
+    if raw and raw != CONFIG_DEFAULTS["output_onnx"]:
+        dest = Path(raw)                                    # same path the .py flow uses
+    else:
+        dest = Path("dataset") / src.stem / f"{src.stem}.onnx"
+    dest = dest.resolve()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest == src:
+        log.info("ONNX is already at %s - nothing to copy.", dest)
+    else:
+        shutil.copy2(src, dest)
+        log.info("Copied ONNX: %s -> %s", src, dest)
+    return str(dest)
+
 def _find_weights(start_tensor_name, initializer_map, producer_map, max_depth=6):
     """Walk backwards from a tensor name to find the weight initializer."""
     queue   = [(start_tensor_name, 0)]
@@ -234,21 +428,19 @@ def _get_div(n: int):
     return [i for i in range(1, n + 1) if n % i == 0 and (i & (i - 1)) == 0]
 
 
-def _get_mh_mw_ifm(node, initializer_map, producer_map):
-    """Return (MH, MW, IFMChannels) for a Conv/MatMul/Gemm node from its weight tensor."""
-    mh, mw, ifm = 1, 1, 1
+def _get_mh_mw(node, initializer_map, producer_map):
+    """Return (MH, MW) for a Conv/MatMul/Gemm node from its weight tensor."""
+    mh, mw = 1, 1
     if len(node.input) > 1:
         w = _find_weights(node.input[1], initializer_map, producer_map)
         if w is not None:
             if len(w.shape) == 4:           # Conv: [OC, IC, KH, KW]
                 mh = w.shape[0]
                 mw = w.shape[1] * w.shape[2] * w.shape[3]
-                ifm = w.shape[1]            # <--- This is the IFMChannels
             elif len(w.shape) == 2:         # MatMul/Gemm: [out, in]
                 mh = w.shape[0]
                 mw = w.shape[1]
-                ifm = w.shape[1]            # For linear layers, IFM == MW
-    return max(1, mh), max(1, mw), max(1, ifm)
+    return max(1, mh), max(1, mw)
 
 
 def extract_folding_config_from_onnx(
@@ -257,18 +449,11 @@ def extract_folding_config_from_onnx(
     fpga_part: str,
     clock_ns: float,
     target_fps: Optional[float],
+    restype_lut: bool = False,
 ) -> Dict[str, Any]:
     """
     Parse the exported ONNX and build a baseline folding config with PE=1 / SIMD=1.
-
-    Node naming follows the convention used by FINN after step_convert_to_hw
-    and by your existing config-generation script:
-
-        MVAU_hls_<i>  / MVAU_rtl_<i>
-        ConvolutionInputGenerator_hls_<i> / ConvolutionInputGenerator_rtl_<i>
-
-    Both _hls and _rtl variants are written with the same PE/SIMD so FINN
-    can choose whichever implementation it prefers.
+    Uses the clean Universal Naming format (e.g., MVAU_0).
     """
     log.info("Parsing ONNX graph: %s", onnx_path)
     model = onnx.load(onnx_path)
@@ -292,36 +477,46 @@ def extract_folding_config_from_onnx(
         if node.op_type not in ("Conv", "MatMul", "Gemm"):
             continue
 
-        # Use the updated function to get IFM
-        mh, mw, ifm = _get_mh_mw_ifm(node, initializer_map, producer_map)
+        mh, mw = _get_mh_mw(node, initializer_map, producer_map)
 
         log.debug(
-            "  %s node — op=%s  MH=%d  MW=%d  IFM=%d",
-            node.name or node.op_type, node.op_type, mh, mw, ifm,
+            "  %s node — op=%s  MH=%d  MW=%d",
+            node.name or node.op_type, node.op_type, mh, mw,
         )
 
-        # MVAU (matrix-vector activation unit) — both HLS and RTL variants
-        for suffix in ("hls", "rtl"):
-            key = f"MVAU_{suffix}_{mva_counter}"
-            cfg[key] = {
-                "PE":        1,
-                "SIMD":      1,
-                "MH":        int(mh),
-                "MW":        int(mw),
-                "ram_style": "auto",
-                "op_type":   node.op_type,
-            }
+        # MVAU — Clean Universal Name
+        key = f"MVAU_{mva_counter}"
+        layer_dict = {
+            "PE":        1,
+            "SIMD":      1,
+            "MH":        int(mh),
+            "MW":        int(mw),
+            "ram_style": "auto",
+            "op_type":   node.op_type,
+        }
+        
+        # Apply the missing restype_lut flag!
+        if restype_lut:
+            layer_dict["resType"] = "lut"
+            
+        cfg[key] = layer_dict
 
-        # ConvolutionInputGenerator — only for Conv nodes
+        # ConvolutionInputGenerator — Clean Universal Name
         if node.op_type == "Conv":
-            for suffix in ("hls", "rtl"):
-                key = f"ConvolutionInputGenerator_{suffix}_{swg_counter}"
-                cfg[key] = {
-                    "SIMD":        1,
-                    "MW":          int(mw),
-                    "IFMChannels": int(ifm),  
-                    "ram_style":   "auto",
-                }
+            in_channels = 1
+            if len(node.input) > 1:
+                w = _find_weights(node.input[1], initializer_map, producer_map)
+                if w is not None and len(w.shape) == 4:
+                    in_channels = int(w.shape[1])  # [OC, IC, KH, KW]
+            
+            swg_key = f"ConvolutionInputGenerator_{swg_counter}"
+            cfg[swg_key] = {
+                "SIMD":        1,
+                "MW":          int(mw),
+                "IFMChannels": in_channels, # Added for your Universal pruner
+                "inp_channels": in_channels,
+                "ram_style":   "auto",
+            }
             swg_counter += 1
 
         mva_counter += 1
@@ -375,12 +570,36 @@ def print_config_summary(cfg: Dict[str, Any]) -> None:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Export Brevitas model to ONNX and generate baseline folding config."
+        description=(
+            "Generate a baseline FINN folding config from either:\n"
+            "  (a) a Brevitas model file  →  export ONNX then parse\n"
+            "  (b) an existing .onnx file →  parse directly, no export\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--model_file",  required=True)
-    p.add_argument("--model_class", default=None)
-    p.add_argument("--config",      default=None, metavar="FILE")
+    # ── Input: mutually exclusive — either a Python model or a pre-built ONNX
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument(
+        "--model_file",
+        metavar="FILE.py",
+        help="Brevitas model Python file. The script exports it to ONNX first.",
+    )
+    src.add_argument(
+        "--onnx_file",
+        metavar="FILE.onnx",
+        help="Existing ONNX file (e.g. from the FINN repo). "
+             "Skips model loading and export entirely.",
+    )
+    p.add_argument("--model_class", default=None,
+                   help="Class name inside --model_file (optional).")
+    p.add_argument("--config",      default=None, metavar="FILE",
+                   help="JSON build config. Required for board/fpga_part/output_cfg "
+                        "when using --onnx_file.")
+    p.add_argument("--output_cfg",  default=None,
+                   help="Override output path for the folding config JSON.")
     p.add_argument("--verbose",     action="store_true")
+    p.add_argument("--restype_lut", action="store_true",
+                   help="Force all MVAU layers to use resType: lut to save DSPs.")
     return p.parse_args()
 
 
@@ -393,52 +612,64 @@ def main():
 
     build_cfg = load_build_config(args.config)
 
-    # ── 1. Load model ──────────────────────────────────────────────────────
-    model = load_model_from_file(
-        args.model_file, args.model_class, build_cfg["model_kwargs"]
-    )
-    log.info("Model: %s  |  params: %s",
-             model.__class__.__name__,
-             f"{sum(p.numel() for p in model.parameters()):,}")
-
-    # ── 2. Export ONNX ─────────────────────────────────────────────────────
-    model.eval()
-    with torch.no_grad():
-        onnx_path = export_to_onnx(
-            model,
-            tuple(build_cfg["input_shape"]),
-            build_cfg["output_onnx"],
-            build_cfg["opset"],
+    # ── 1 & 2: Model loading + ONNX export (skipped when --onnx_file given) ─
+    if args.onnx_file:
+        src_path = str(Path(args.onnx_file).resolve())
+        if not Path(src_path).exists():
+            log.error("ONNX file not found: %s", src_path)
+            sys.exit(1)
+        # Same layout as the .py flow: the ONNX ends up at output_onnx
+        onnx_path  = stage_onnx_into_dataset(src_path, build_cfg)
+        model_stem = Path(onnx_path).stem
+    else:
+        # ── 1. Load model ──────────────────────────────────────────────────
+        model = load_model_from_file(
+            args.model_file, args.model_class, build_cfg["model_kwargs"]
         )
+        log.info("Model: %s  |  params: %s",
+                 model.__class__.__name__,
+                 f"{sum(p.numel() for p in model.parameters()):,}")
+
+        # ── 2. Export ONNX ─────────────────────────────────────────────────
+        model.eval()
+        with torch.no_grad():
+            onnx_path = export_to_onnx(
+                model,
+                tuple(build_cfg["input_shape"]),
+                build_cfg["output_onnx"],
+                build_cfg["opset"],
+            )
+        model_stem = Path(onnx_path).stem
 
     # ── 3. Parse ONNX → baseline folding config ────────────────────────────
     cfg = extract_folding_config_from_onnx(
-        onnx_path  = onnx_path,
-        board      = build_cfg["board"],
-        fpga_part  = build_cfg["fpga_part"],
-        clock_ns   = build_cfg["clock_ns"],
-        target_fps = build_cfg["target_fps"],
+        onnx_path   = onnx_path,
+        board       = build_cfg["board"],
+        fpga_part   = build_cfg["fpga_part"],
+        clock_ns    = build_cfg["clock_ns"],
+        target_fps  = build_cfg["target_fps"],
+        restype_lut = args.restype_lut,
     )
 
-    # ── 4. Save ────────────────────────────────────────────────────────────
+    # ── 4. Resolve output path ─────────────────────────────────────────────
+    if args.output_cfg:
+        out_path = Path(args.output_cfg)
+    else:
+        # If the config specifies an output_cfg use it, otherwise derive from ONNX stem
+        raw = build_cfg.get("output_cfg", "")
+        if raw and raw != CONFIG_DEFAULTS["output_cfg"]:
+            out_path = Path(raw)
+        else:
+            out_path = Path(f"dataset/config_files/{model_stem}/folding_config_baseline.json")
+
+    # ── 5. Save ────────────────────────────────────────────────────────────
     print_config_summary(cfg)
 
-    out_path = Path(build_cfg["output_cfg"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(cfg, f, indent=2)
 
     log.info("Folding config written to: %s", out_path)
-    log.info(
-        "\nNext step:\n"
-        "  python finn_raytune_optimizer.py \\\n"
-        "      --baseline_cfg  %s \\\n"
-        "      --build_script  full_build.py \\\n"
-        "      --onnx_path     %s \\\n"
-        "      --num_samples   40 \\\n"
-        "      --objective lut_slack\n",
-        out_path, onnx_path,
-    )
 
 
 if __name__ == "__main__":
