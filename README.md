@@ -200,14 +200,16 @@ uses built-in defaults.
 ### 2. Single-model tuning
 
 ```sh
-python finn_raytune_optimizer.py \
-  --baseline_cfg  dataset/config_files/cnv_w1a1/folding_config_baseline.json \
-  --build_script  custom_builds/cnv_w1a1_build.py \
-  --onnx_path     dataset/cnv_w1a1/cnv_w1a1.onnx \
-  --num_samples   40 \
-  --objective     lut_slack \
-  --search_strategy optuna \
-  --extra_build_args --estimate-only
+python finn_raytune_optimizer_ai.py \
+      --board               Zynq-7015 \
+      --model               cnv_w1a1 \
+      --epoch_schedule      "50,50,50,100,150,250,350" \
+      --prune_on_start \
+      --objective           throughput \
+      --constraints         "USER PROMPT HERE" \
+      --search_strategy     optuna \
+      --max_concurrent      10 \
+      --extra_build_args    --estimate-only
 ```
 
 | Option | Description |
@@ -218,7 +220,7 @@ python finn_raytune_optimizer.py \
 | `--best_cfg_out` | Best-config output. Defaults to `dataset/config_files/<model>/folding_config_best_<strategy>.json`. |
 | `--num_samples` | Number of trials (default `100`). |
 | `--max_concurrent` | Concurrent builds (default `1`; raise only with enough Vivado licences). |
-| `--objective` | `lut`, `lut_slack`, `throughput`, or `balanced`. |
+| `--objective` | `throughput`, `resource_avg`, or `balanced`. |
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
 | `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
 | `--parallelism_threshold` | Skip builds whose summed PE+SIMD exceeds this value. |
@@ -350,8 +352,6 @@ DSE iterations.
 
 | Objective | Direction | Meaning |
 | --- | --- | --- |
-| `lut` | minimize | Normalized LUT usage (single-model only). |
-| `lut_slack` | minimize | LUT usage combined with timing slack (single-model only). |
 | `throughput` | maximize | Estimated/simulated throughput in images/s. |
 | `balanced` | minimize | Single-model: bottleneck utilization divided by throughput. AI tuner: negated total throughput plus a weighted resource sum. |
 | `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization (AI tuner only). |
