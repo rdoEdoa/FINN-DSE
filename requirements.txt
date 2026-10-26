@@ -28,6 +28,7 @@ ray
 ray[tune]
 optuna
 nevergrad
+hyperopt
 
 # --- OpenAI ---
 OpenAI
