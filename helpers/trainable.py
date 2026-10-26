@@ -123,7 +123,7 @@ def make_joint_trainable(
                            r["metrics"], m_obj, r["success"], device=device)
             for sib_key in duplicate_siblings.get(ms, []):       
                 _append_to_csv(all_models[sib_key]["results_csv"], trial_name,
-                               per_model_params[ms], r["metrics"], m_obj, r["success"])
+                               per_model_params[ms], r["metrics"], m_obj, r["success"], device=device)
 
         # ── Joint objective across all models, summing resources ──────────
         obj_value, breakdown = compute_joint_objective(
