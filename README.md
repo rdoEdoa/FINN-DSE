@@ -6,7 +6,7 @@ model and a baseline folding configuration, the framework searches for folding
 parameters that maximize throughput, minimize resource usage, or balance both —
 optionally pruning the space with an LLM between search rounds.
 
-The toolchain has four entry points:
+The toolchain has three entry points:
 
 | Script | Purpose |
 | --- | --- |
@@ -97,7 +97,7 @@ dataset/
 │   ├── <model>/
 │   │   ├── folding_config_baseline.json
 │   │   ├── folding_config_best_<strategy>.json
-│   │   └── <strategy>/              # Per-search artifacts (single model)
+│   │   └── <strategy>/              # Per-search artifacts
 │   │       ├── config_0000/
 │   │       │   ├── folding_config.json
 │   │       │   ├── trial_params.json
@@ -195,40 +195,7 @@ Useful options:
 If `--config` is omitted, the generator writes `build_config.template.json` and
 uses built-in defaults.
 
-### 2. Single-model tuning
-
-```sh
-python finn_raytune_optimizer_ai.py \
-      --board               Zynq-7015 \
-      --model               cnv_w1a1 \
-      --epoch_schedule      "50,50,50,100,150,250,350" \
-      --prune_on_start \
-      --objective           throughput \
-      --constraints         "USER PROMPT HERE" \
-      --search_strategy     optuna \
-      --max_concurrent      10 \
-      --extra_build_args    --estimate-only
-```
-
-| Option | Description |
-| --- | --- |
-| `--baseline_cfg` | Baseline JSON from `generate_folding_config.py` (required). |
-| `--build_script` | Per-model FINN build script (required). |
-| `--onnx_path` | Exported ONNX file (required). |
-| `--best_cfg_out` | Best-config output. Defaults to `dataset/config_files/<model>/folding_config_best_<strategy>.json`. |
-| `--num_samples` | Number of trials (default `100`). |
-| `--max_concurrent` | Concurrent builds (default `1`; raise only with enough Vivado licences). |
-| `--objective` | `throughput`, `resource_avg`, or `balanced`. |
-| `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
-| `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
-| `--database_dir` | Folder of pre-built configs to reuse instead of rebuilding. |
-| `--ray_address` | Connect to an existing Ray cluster. |
-| `--extra_build_args` | Verbatim arguments forwarded to the build script. **Must be last.** |
-
-> The single-model tuner evaluates objectives against a hardcoded **U250**
-> resource budget and ignores the board in `build_configs/`.
-
-### 3. Multi-model tuning with LLM pruning
+### 2. Multi-model tuning with LLM pruning
 
 The AI tuner derives every path from `--model <name>`:
 
@@ -270,7 +237,7 @@ round's `trial_results.csv` and writes a new `pruned_space.json`. If a round
 produces at most one successful build, a guardrail clamps PE/SIMD candidates to
 `<= 8`.
 
-### 4. Standalone LLM pruning
+### 3. Standalone LLM pruning
 
 ```sh
 python space_pruner.py \
@@ -349,7 +316,7 @@ DSE iterations.
 | Objective | Direction | Meaning |
 | --- | --- | --- |
 | `throughput` | maximize | Estimated/simulated throughput in images/s. |
-| `balanced` | minimize | Single-model: bottleneck utilization divided by throughput. AI tuner: negated total throughput plus a weighted resource sum. |
+| `balanced` | minimize | Negated total throughput plus a weighted resource sum. |
 | `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization (AI tuner only). |
 
 In every case, configurations exceeding board capacity (or 85 % utilization)
@@ -415,8 +382,6 @@ The joint tuner writes final best configs for each model to its own
   `helpers/folding.py` performs the expansion.
 - **No valid search space** — the baseline lacks `MH`/`MW`/`IFMChannels`
   metadata. Regenerate it with `generate_folding_config.py`.
-- **Resource budget confusion** — the single-model tuner is fixed to U250
-  limits; use the AI tuner with `--board` for other targets.
 - **Slower-than-expected runs** — start with `--extra_build_args
   --estimate-only`; omit it only for full Vivado synthesis.
 
