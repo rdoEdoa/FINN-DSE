@@ -327,9 +327,7 @@ DSE iterations.
 | `balanced` | minimize | Negated total throughput plus a weighted resource sum. |
 | `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization. |
 
-In every case, configurations exceeding board capacity receive a penalty;
-LUT/DSP/BRAM utilization above 85 % is also penalized, and failed builds
-receive a large sentinel value.
+In every case, configurations exceeding board capacity receive a penalty.
 
 ---
 
