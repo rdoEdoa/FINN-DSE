@@ -1,7 +1,7 @@
 # FINN-DSE — Design Space Exploration of FINN Folding Parameters
 
 Automated exploration of the **PE/SIMD folding space** for quantized neural
-networks deployed with [FINN](https://github.com/Xilinx/finn). Given an ONNX
+networks deployed on FPGA with [FINN](https://github.com/Xilinx/finn). Given an ONNX
 model and a baseline folding configuration, the framework searches for folding
 parameters that maximize throughput, minimize resource usage, or balance both —
 optionally pruning the space with an LLM between search rounds.
