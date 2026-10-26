@@ -225,7 +225,7 @@ python finn_raytune_optimizer_ai.py \
 | `--epoch_schedule` | Comma-separated trials per pruning round, e.g. `50,100,200`. |
 | `--objective` | `throughput`, `resource_avg`, or `balanced`. |
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
-| `--max_concurrent` | Concurrent builds (default `1`; raise only with enough Vivado licences). |
+| `--max_concurrent` | Concurrent builds (default `1`). |
 | `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
 | `--seed` | Random seed (default `20`). |
 | `--raytune_dir` | Ray Tune output directory (default `./raytune_logs`). |
