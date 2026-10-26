@@ -13,7 +13,7 @@ from typing import Dict
 BOARDS: Dict[str, Dict[str, int]] = {
     "XC7S25":    {"LUT": 14600,   "DSP": 80,    "BRAM": 45,   "FF": 29200},
     # XC7S25 with a reduced resource budget
-    "XC7S25-65": {"LUT": 9490,    "DSP": 68,    "BRAM": 29,   "FF": 24820},
+    "XC7S25-65": {"LUT": 9490,    "DSP": 52,    "BRAM": 29,   "FF": 18980},
     "Zynq-7010": {"LUT": 17600,   "DSP": 80,    "BRAM": 60,   "FF": 35200},
     "Zynq-7015": {"LUT": 46200,   "DSP": 160,   "BRAM": 95,   "FF": 92400},
     "Zynq-7020": {"LUT": 53200,   "DSP": 220,   "BRAM": 140,  "FF": 106400},
