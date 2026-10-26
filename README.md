@@ -34,13 +34,12 @@ ONNX model ──────┘                                        │
                        ┌──────────────────────────────────┴─────────────────┐
                        ▼                                                    ▼
           folding_config_best_<strategy>.json                       LLM pruning rounds
-                                                                      (AI tuner only)
 ```
 
 1. **Baseline generation** parses the ONNX weight tensors to recover each
    compute layer's `MH` (output dim) and `MW` (input dim), then writes a config
    with `PE = 1` and `SIMD = 1` for every layer. Layer names are normalized to
-   the logical form `MVAU_0`, `MVAU_1`, … which the tuners later expand into the
+   the logical form `MVAU_0`, `MVAU_1`, … which the tuner later expands into the
    `MVAU_hls_0` / `MVAU_rtl_0` pairs FINN expects.
 2. **Search space** contains one `PE` and one `SIMD` hyperparameter per logical
    layer. Only divisors of `MH` / `MW` are offered, so FINN never receives an
@@ -81,6 +80,7 @@ ONNX model ──────┘                                        │
 │   ├── MLP_W3A3.onnx
 │   ├── cnv_w1a1.onnx
 │   ├── mlp_w2a2.onnx
+│   ├── resnet18.onnx
 │   └── resnet50.onnx
 └── requirements.txt
 ```
@@ -103,8 +103,8 @@ dataset/
 │   │       │   ├── trial_params.json
 │   │       │   └── build.log
 │   │       ├── <strategy>_config_0000.json
-│   │       ├── trial_results.csv    # AI tuner only
-│   │       ├── pruned_space.json    # AI tuner only
+│   │       ├── trial_results.csv
+│   │       ├── pruned_space.json
 │   │       ├── llm_reasoning_history.txt
 │   │       └── optuna_study.db
 │   └── JOINT__<modelA>+<modelB>/
@@ -195,9 +195,10 @@ Useful options:
 If `--config` is omitted, the generator writes `build_config.template.json` and
 uses built-in defaults.
 
-### 2. Multi-model tuning with LLM pruning
+### 2. Tuning with LLM pruning
 
-The AI tuner derives every path from `--model <name>`:
+The AI tuner handles one or more models; pass a single name to `--model` for
+single-model tuning. It derives every path from `--model <name>`:
 
 ```
 build_configs/<name>_build_config.json
@@ -224,13 +225,19 @@ python finn_raytune_optimizer_ai.py \
 | `--epoch_schedule` | Comma-separated trials per pruning round, e.g. `50,100,200`. |
 | `--objective` | `throughput`, `resource_avg`, or `balanced`. |
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
+| `--max_concurrent` | Concurrent builds (default `1`; raise only with enough Vivado licences). |
+| `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
+| `--seed` | Random seed (default `20`). |
+| `--raytune_dir` | Ray Tune output directory (default `./raytune_logs`). |
+| `--ray_address` | Connect to an existing Ray cluster. |
 | `--constraints` | Natural-language goal passed to the LLM pruner. |
 | `--prune_on_start` | Run the pruner once before the first round. |
 | `--api_key` | API key forwarded to the pruner (despite the name, this is the **Cerebras** key, unless the provider is changed inside the script). |
 | `--extra_build_args` | Verbatim arguments forwarded to the build scripts. **Must be last.** |
 
-Before the first round, the AI tuner runs an **all-PE/SIMD=1 feasibility build**
-for each model and aborts the whole run if the model does not fit the board.
+On a fresh experiment (when `trial_results.csv` does not yet exist), the AI
+tuner runs an **all-PE/SIMD=1 feasibility build** for each model and aborts the
+whole run if the model does not fit the board.
 
 After each round (except the last), the tuner calls the LLM pruner with the
 round's `trial_results.csv` and writes a new `pruned_space.json`. If a round
@@ -251,7 +258,8 @@ python space_pruner.py \
 Optional: `--results_csv <csv>` lets the LLM reason about past trials, and
 `--model <name>` selects the LLM (default `qwen-3.8-27b`).
 
-The pruner needs a Cerebras API key (or any other API Key, is the provider is manually changed inside the script), supplied via `--api_key` or the
+The pruner needs a Cerebras API key (or another API key if the provider is
+changed inside the script), supplied via `--api_key` or the
 `CEREBRAS_API_KEY` environment variable (a local `.env` is loaded when
 `python-dotenv` is installed). It reads layer topology and the build config,
 computes all valid `PE`/`SIMD` divisors, asks the LLM to select a subset, and
@@ -276,8 +284,8 @@ validates the answer against the mathematical bounds before writing
   "target_fps": null,
   "model_kwargs": {
     "num_classes": 10,
-    "weight_bit_width": 2,
-    "act_bit_width": 2,
+    "weight_bit_width": 1,
+    "act_bit_width": 1,
     "inp_bit_width": 8,
     "in_channels": 3
   }
@@ -290,9 +298,9 @@ validates the answer against the mathematical bounds before writing
 | `output_cfg` | Destination baseline folding config. |
 | `opset` | ONNX opset used during export. |
 | `input_shape` | Model input tensor shape. |
-| `board`, `fpga_part`, `clock_ns`, `target_fps` | FINN/Vivado target settings. |
+| `board`, `fpga_part`, `clock_ns`, `target_fps` | Baseline target metadata written by the generator; the actual build target is hardcoded in each `custom_builds/*_build.py`. |
 | `model_kwargs` | Constructor arguments forwarded to the model class (ignored for `--onnx_file`). |
-| `build_script`, `baseline_timeout` | Legacy keys; the tuners use `custom_builds/*_build.py` instead. |
+| `build_script`, `baseline_timeout` | Legacy keys; the tuner uses `custom_builds/*_build.py` instead. |
 
 `custom_builds/<model>_build.py` accepts:
 
@@ -317,21 +325,28 @@ DSE iterations.
 | --- | --- | --- |
 | `throughput` | maximize | Estimated/simulated throughput in images/s. |
 | `balanced` | minimize | Negated total throughput plus a weighted resource sum. |
-| `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization (AI tuner only). |
+| `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization. |
 
-In every case, configurations exceeding board capacity (or 85 % utilization)
-receive a penalty, and failed builds receive a large sentinel value.
+In every case, configurations exceeding board capacity receive a penalty;
+LUT/DSP/BRAM utilization above 85 % is also penalized, and failed builds
+receive a large sentinel value.
 
 ---
 
 ## Supported boards and models
 
-Boards available to the AI tuner via `--board` (`helpers/boards.py`):
+Resource budgets available to the AI tuner via `--board` (`helpers/boards.py`):
 
 `XC7S25`, `XC7S25-65`, `Zynq-7010`, `Zynq-7015`, `Zynq-7020`, `Zynq-7030`,
 `ZU3EG`, `U250`.
 
-`XC7S25-65` is the `XC7S25` using only 65% of the available resources.
+`--board` only selects the budget used to score trials; it does not change the
+synthesis target. The actual `fpga_part` and clock are hardcoded in each
+`custom_builds/*_build.py` and must be edited to match. The `board` key in
+`build_configs/*.json` is baseline metadata and is not validated against this
+list.
+
+`XC7S25-65` is a reduced `XC7S25` budget using 65% of the total resources.
 
 Models with an ONNX shipped in `models/`:
 
@@ -377,7 +392,7 @@ The joint tuner writes final best configs for each model to its own
   at `PE=1, SIMD=1`; choose a larger board or reduce the model.
 - **"No API key found"** — export `CEREBRAS_API_KEY` or pass `--api_key`. Install `openai`, `certifi`, and optionally
   `python-dotenv`.
-- **Pre-expanded baseline rejected** — feed the tuners logical baselines
+- **Pre-expanded baseline rejected** — feed the tuner logical baselines
   (`MVAU_0`), not configs that already contain `MVAU_hls_0` / `MVAU_rtl_0`;
   `helpers/folding.py` performs the expansion.
 - **No valid search space** — the baseline lacks `MH`/`MW`/`IFMChannels`
