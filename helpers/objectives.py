@@ -40,11 +40,7 @@ def compute_objective(
             return PENALTY_HARD
 
         return (
-            -tp
-            + lut_u * 10
-            + bram_u * 10
-            + ff_u * 10
-            + dsp_u * 10
+            -tp + (lut_u + bram_u + ff_u + dsp_u) * 10
         )
 
     else:
@@ -97,7 +93,7 @@ def compute_joint_objective(
     elif objective == "balanced":
         if tp_total <= 0:
             return PENALTY_HARD, per_model
-        return -tp_total + lut_u * 10 + bram_u * 10 + ff_u * 10 + dsp_u * 10, per_model
+        return -tp_total + (lut_u + bram_u + ff_u + dsp_u) * 10, per_model
     elif objective == "resource_avg":
         if tp_total <= 0:
             return PENALTY_HARD, per_model
