@@ -2,7 +2,6 @@ from typing import Mapping, Dict, Any, Optional, Tuple
 
 PENALTY = 10
 PENALTY_HARD = 10000
-MAX_UTIL = 0.85
 
 
 def compute_objective(
@@ -20,7 +19,7 @@ def compute_objective(
     tp   = metrics.get("throughput_fps", 0.0)
 
     # Normalized resource utilization
-    lut_u  = lut / device["LUT"]
+    lut_u  = lut / device["LUT"] if lut > 0 else 0.0
     dsp_u  = dsp / device["DSP"] if dsp > 0 else 0.0
     bram_u = bram / device["BRAM"] if bram > 0 else 0.0
     ff_u   = ff / device["FF"] if ff > 0 else 0.0
@@ -29,21 +28,12 @@ def compute_objective(
     if lut_u > 1 or dsp_u > 1 or bram_u > 1 or ff_u > 1:
         return PENALTY_HARD
 
-    # Penalty for resource utilization exceeding MAX_UTIL
-    over_util = max(
-        0.0,
-        lut_u - MAX_UTIL,
-        dsp_u - MAX_UTIL,
-        bram_u - MAX_UTIL,
-    )
-    util_penalty = over_util * PENALTY
-
     if objective == "throughput":
         return -tp if tp > 0 else PENALTY_HARD
 
     elif objective == "resource_avg":
         avg = (lut_u + dsp_u + bram_u + ff_u) / 4
-        return avg + util_penalty
+        return avg if tp > 0 else PENALTY_HARD
 
     elif objective == "balanced":
         if tp <= 0:
@@ -102,18 +92,15 @@ def compute_joint_objective(
     if lut_u > 1 or dsp_u > 1 or bram_u > 1 or ff_u > 1:
         return PENALTY_HARD, per_model
 
-    over_util = max(0.0, lut_u - MAX_UTIL, dsp_u - MAX_UTIL, bram_u - MAX_UTIL)
-    util_penalty = over_util * PENALTY
-
     if objective == "throughput":
         return (-tp_total, per_model) if tp_total > 0 else (PENALTY_HARD, per_model)
     elif objective == "balanced":
         if tp_total <= 0:
             return PENALTY_HARD, per_model
         return -tp_total + lut_u * 10 + bram_u * 10 + ff_u * 10 + dsp_u * 10, per_model
-    elif objective == "lut":
-        return lut_u + util_penalty, per_model
     elif objective == "resource_avg":
-        return (lut_u + dsp_u + bram_u + ff_u) / 4 + util_penalty, per_model
+        if tp_total <= 0:
+            return PENALTY_HARD, per_model
+        return (lut_u + dsp_u + bram_u + ff_u) / 4, per_model
     else:
         raise ValueError(f"Unknown objective: '{objective}'")
