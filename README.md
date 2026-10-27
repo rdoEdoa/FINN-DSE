@@ -323,7 +323,7 @@ DSE iterations.
 
 | Objective | Direction | Meaning |
 | --- | --- | --- |
-| `throughput` | maximize | Estimated/simulated throughput in images/s. |
+| `throughput` | minimize | Negated throughput in images/s. |
 | `balanced` | minimize | Negated total throughput plus a weighted resource sum. |
 | `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization. |
 
