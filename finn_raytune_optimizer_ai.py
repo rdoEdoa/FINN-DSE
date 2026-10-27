@@ -74,14 +74,13 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
-
 # Active board resources. Filled in main() from --board.
 DEVICE: Dict[str, int] = dict(BOARDS[DEFAULT_BOARD])
 
 PENALTY_HARD = 10000
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Folding config helpers  
+# Folding config loader  
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_folding_config(path: str) -> Dict[str, Any]:
@@ -198,11 +197,6 @@ def print_trial_summary(analysis) -> None:
     print("\n═══════════════ Round Summary ═══════════════")
     print(df[cols].sort_values(sort_col).to_string(index=True))
     print("═════════════════════════════════════════════\n")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUNNER 
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_joint_search_space(models: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Merge each model's pruned_space.json into one flat space, prefixed by model key."""
