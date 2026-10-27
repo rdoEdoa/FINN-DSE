@@ -39,7 +39,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv(override=False)
 except ImportError:
-    pass  # python-dotenv not installed — fall back to environment variables only
+    pass  # python-dotenv not installed - fall back to environment variables only
 
 # Force the SSL cert file to a path we know is valid inside the container
 os.environ["SSL_CERT_FILE"] = certifi.where()
@@ -168,7 +168,7 @@ def load_results_summary(
 
     if successes:
         try:
-            # Sort by objective (lowest is best for Optuna)
+            # Sort by objective
             best = min(successes, key=lambda r: float(r.get("objective", 1e9)))
             
             best_params = {k: int(best[k]) for k in param_keys if k in best and best[k].isdigit()}
@@ -184,7 +184,10 @@ def load_results_summary(
     return "\n".join(lines)
 
 
-#HELPER
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper
+# ─────────────────────────────────────────────────────────────────────────────
+
 def safe_json_parse(content: str) -> dict:
     """
     Parse LLM JSON output defensively. Falls back to a repair pass if the
@@ -515,7 +518,7 @@ def validate_and_finalize(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public entry point (callable from optimizer)
+# Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pruner(
@@ -636,7 +639,6 @@ def run_pruner_multi(
         sys.exit(1)
 
     client = OpenAI(api_key=resolved_key, base_url="https://api.cerebras.ai/v1")
-    #client = OpenAI(api_key=resolved_key)
 
     try:
         llm_spaces, llm_reasoning, overall_reasoning, usage = prompt_agent_multi(
