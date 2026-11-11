@@ -1,9 +1,12 @@
 import csv
-import os
 import fcntl
+import logging
+import os
 
 from collections import Counter
 from typing import Any, Dict, List, Mapping
+
+log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Thread-safe counters
@@ -86,16 +89,30 @@ def _append_to_csv(
     # Add all trial_params as columns
     row.update({k: v for k, v in trial_params.items()})
 
-    file_exists = os.path.exists(csv_path)
-    lock_path   = csv_path + ".lock"
+    lock_path = csv_path + ".lock"
 
     with open(lock_path, "w") as lock_f:
         fcntl.flock(lock_f, fcntl.LOCK_EX)
         try:
+            # Reuse the existing header so columns stay aligned even when the
+            # row's key order differs from the first row written.
+            fieldnames = None
+            if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+                with open(csv_path, newline="") as rf:
+                    fieldnames = next(csv.reader(rf), None)
+            write_header = not fieldnames
+            if write_header:
+                fieldnames = list(row.keys())
+            else:
+                dropped = [k for k in row if k not in fieldnames]
+                if dropped:
+                    log.warning("CSV %s has no columns for %s — values dropped.",
+                                csv_path, dropped)
+
             with open(csv_path, "a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(row.keys()),
-                                        extrasaction="ignore")
-                if not file_exists or os.path.getsize(csv_path) == 0:
+                writer = csv.DictWriter(f, fieldnames=fieldnames,
+                                        restval="", extrasaction="ignore")
+                if write_header:
                     writer.writeheader()
                 writer.writerow(row)
         finally:

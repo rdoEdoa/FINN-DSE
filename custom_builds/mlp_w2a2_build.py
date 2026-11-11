@@ -14,7 +14,7 @@ import finn.builder.build_dataflow_config as build_cfg
 warnings.filterwarnings("ignore")
 
 
-def create_build_config(output_dir, folding_config_path, estimate_only=False):
+def create_build_config(output_dir, folding_config_path, estimate_only=False, fpga_part="xc7z020clg400-1"):
     """Creates the DataflowBuildConfig (default FINN flow, custom folding)."""
     outputs = [build_cfg.DataflowOutputType.ESTIMATE_REPORTS]
     if not estimate_only:
@@ -31,7 +31,7 @@ def create_build_config(output_dir, folding_config_path, estimate_only=False):
         hls_clk_period_ns=10.0,
         folding_config_file=folding_config_path,
         auto_fifo_depths=False,
-        fpga_part="xc7z020clg400-1",
+        fpga_part=fpga_part,
         mvau_wwidth_max=256,
         split_large_fifos=True,
         # Must be False for unattended runs (e.g. Optuna): True opens pdb on errors
@@ -129,6 +129,7 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='Detailed output log')
     parser.add_argument('--folding-config', '-fc', default='config_00000.json', help='Set the folding configuration file name')
     parser.add_argument('--estimate-only', action='store_true', help='Run only up to analytical estimations, skip Vivado synthesis')
+    parser.add_argument('--fpga-part', default="xc7z020clg400-1", help='Xilinx part to target (passed by the optimizer from --board)')
     args = parser.parse_args()
 
     model_directory = os.path.join("dataset", args.directory)
@@ -162,7 +163,7 @@ def main():
     exit_code = 0
     try:
         print("Create build configuration...")
-        cfg = create_build_config(output_dir, folding_config_path, estimate_only=args.estimate_only)
+        cfg = create_build_config(output_dir, folding_config_path, estimate_only=args.estimate_only, fpga_part=args.fpga_part)
         print("=" * 50)
 
         # Returns 0 on success, -1 on failure

@@ -38,18 +38,25 @@ ONNX model ──────┘                                        │
 
 1. **Baseline generation** parses the ONNX weight tensors to recover each
    compute layer's `MH` (output dim) and `MW` (input dim), then writes a config
-   with `PE = 1` and `SIMD = 1` for every layer. Layer names are normalized to
-   the logical form `MVAU_0`, `MVAU_1`, … which the tuner later expands into the
-   `MVAU_hls_0` / `MVAU_rtl_0` pairs FINN expects.
+   with `PE = 1` and `SIMD = 1` for every layer. Following FINN's convention,
+   Conv weights `[OC, IC, KH, KW]` give `MH = OC`, `MW = IC·KH·KW`. For MatMul
+   the weight *as the node receives it* is `[in, out]` (`MW = in`, `MH = out`),
+   so the `Transpose` Brevitas inserts after the stored `[out, in]` initializer
+   is taken into account; Gemm weights are read as `[out, in]` when
+   `transB = 1` and `[in, out]` otherwise. Layer names are
+   normalized to the logical form `MVAU_0`, `MVAU_1`, … which the tuner later
+   expands into the `MVAU_hls_0` / `MVAU_rtl_0` pairs FINN expects.
 2. **Search space** contains one `PE` and one `SIMD` hyperparameter per logical
    layer. Only divisors of `MH` / `MW` are offered, so FINN never receives an
    illegal value.
 3. **Each trial** patches the baseline, writes a folding config, invokes a build
    script as a subprocess, and reads the FINN JSON reports (`status.json`,
    `ooc_synth_and_timing.json`, `rtlsim_performance.json`, or the estimate
-   reports) into a scalar objective.
-4. **The best configuration** is re-expanded to `_hls_` / `_rtl_` names and
-   saved next to the baseline.
+   reports) into a scalar objective. Patching overrides only `PE`/`SIMD`; every
+   other FINN attribute in the baseline (`resType`, `ram_style`, `mem_mode`, …)
+   is carried into both the `_hls_` and `_rtl_` entries.
+4. **The best configuration** — the best feasible trial across *all* rounds —
+   is re-expanded to `_hls_` / `_rtl_` names and saved next to the baseline.
 
 ---
 
@@ -66,7 +73,7 @@ ONNX model ──────┘                                        │
 ├── custom_builds/                   # Per-model FINN build scripts
 │   └── <model>_build.py
 ├── helpers/
-│   ├── boards.py                    # FPGA resource budgets
+│   ├── boards.py                    # FPGA resource budgets + Xilinx parts
 │   ├── build.py                     # FINN subprocess + feasibility check
 │   ├── folding.py                   # Config patching/sanitizing
 │   ├── metrics.py                   # Report parsing / warm starts
@@ -97,21 +104,29 @@ dataset/
 │   ├── <model>/
 │   │   ├── folding_config_baseline.json
 │   │   ├── folding_config_best_<strategy>.json
-│   │   └── <strategy>/              # Per-search artifacts
-│   │       ├── config_0000/
+│   │   ├── <model>_feasibility_check.json        # Folding configs passed to FINN
+│   │   ├── <strategy>_<model>_config_0000.json   #   (single-model run)
+│   │   ├── <strategy>_J<hash>_<model>_config_0000.json  # (multi-model run)
+│   │   └── <strategy>/              # Per-model search artifacts
+│   │       ├── config_0000/         # Per-trial dir (single-model run only)
 │   │       │   ├── folding_config.json
 │   │       │   ├── trial_params.json
 │   │       │   └── build.log
-│   │       ├── <strategy>_config_0000.json
 │   │       ├── trial_results.csv
 │   │       ├── pruned_space.json
 │   │       ├── llm_reasoning_history.txt
-│   │       └── optuna_study.db
+│   │       └── optuna_study.db      # (single-model run only)
 │   └── JOINT__<modelA>+<modelB>/
-│       └── <strategy>/              # Joint search artifacts
+│       └── <strategy>/              # Multi-model search artifacts
+│           ├── config_0000/<model>/ # Per-trial, per-model dir
+│           └── optuna_study.db
 └── results_synth/
     └── <model>/<config_stem>/        # FINN reports per trial
 ```
+
+`J<hash>` is a short hash of the model combination. Trial numbers are counted
+separately for each combination, so the tag keeps one combination's configs and
+FINN results from overwriting another's.
 
 A fresh clone has no `dataset/`; create it with `generate_folding_config.py` or
 copy ONNX files and baselines into the layout above.
@@ -192,8 +207,8 @@ Useful options:
 - `--restype_lut` — force `resType: lut` on MVAU layers to save DSPs.
 - `--verbose` — debug logging.
 
-If `--config` is omitted, the generator writes `build_config.template.json` and
-uses built-in defaults.
+If `--config` is omitted, the generator uses built-in defaults and writes
+`build_config.template.json` only if that file does not already exist.
 
 ### 2. Tuning with LLM pruning
 
@@ -221,28 +236,40 @@ python finn_raytune_optimizer_ai.py \
 | Option | Description |
 | --- | --- |
 | `--model` | One or more model names sharing the same board. Repeating a name deploys multiple instances but builds it once. |
-| `--board` | Target board from `helpers/boards.py` (default `Zynq-7015`). |
+| `--board` | Target board from `helpers/boards.py` (default `Zynq-7015`). Sets both the resource budget and the `--fpga-part` passed to the build scripts. |
 | `--epoch_schedule` | Comma-separated trials per pruning round, e.g. `50,100,200`. |
 | `--objective` | `throughput`, `resource_avg`, or `balanced`. |
 | `--search_strategy` | `optuna`, `random`, `nevergrad`, `nevergrad_de`, `hyperopt`. |
-| `--max_concurrent` | Concurrent builds (default `1`). |
+| `--max_concurrent` | Concurrent trials (default `1`). Each trial requests 2 CPUs per distinct model, capped at the CPUs available to Ray. |
 | `--build_timeout` | Per-trial timeout in seconds (default `7200`). |
-| `--seed` | Random seed (default `20`). |
+| `--seed` | Random seed (default `20`), offset by the round number. Seeds Optuna (TPE sampler), HyperOpt and random search; Nevergrad is not seeded. |
 | `--raytune_dir` | Ray Tune output directory (default `./raytune_logs`). |
 | `--ray_address` | Connect to an existing Ray cluster. |
 | `--constraints` | Natural-language goal passed to the LLM pruner. |
 | `--prune_on_start` | Run the pruner once before the first round. |
 | `--api_key` | API key forwarded to the pruner (despite the name, this is the **Cerebras** key, unless the provider is changed inside the script). |
-| `--extra_build_args` | Verbatim arguments forwarded to the build scripts. **Must be last.** |
+| `--extra_build_args` | Verbatim arguments forwarded to the build scripts. **Must be last.** Passing `--fpga-part <part>` here overrides the part chosen from `--board`. |
 
 On a fresh experiment (when `trial_results.csv` does not yet exist), the AI
 tuner runs an **all-PE/SIMD=1 feasibility build** for each model and aborts the
 whole run if the model does not fit the board.
 
+Each round starts a **fresh search** over that round's pruned space (for
+Optuna, a new study per round inside the same `optuna_study.db`). It is
+warm-started with up to 5 of the best past configurations that are still legal
+in the new space, paired by rank across models. A pairing is skipped when the
+models' combined LUT/DSP/BRAM/FF, counting duplicate instances, exceeds the
+board.
+
 After each round (except the last), the tuner calls the LLM pruner with the
 round's `trial_results.csv` and writes a new `pruned_space.json`. If a round
 produces at most one successful build, a guardrail clamps PE/SIMD candidates to
 `<= 8`.
+
+In `trial_results.csv`, `build_success = 1` means the FINN build succeeded
+**and** the model fits the board on its own. Over-capacity builds are recorded
+as failures with the `10000` penalty objective, so the LLM's failure rate, the
+guardrail, and warm-starting all treat them as failed.
 
 ### 3. Standalone LLM pruning
 
@@ -298,7 +325,7 @@ validates the answer against the mathematical bounds before writing
 | `output_cfg` | Destination baseline folding config. |
 | `opset` | ONNX opset used during export. |
 | `input_shape` | Model input tensor shape. |
-| `board`, `fpga_part`, `clock_ns`, `target_fps` | Baseline target metadata written by the generator; the actual build target is hardcoded in each `custom_builds/*_build.py`. |
+| `board`, `fpga_part`, `clock_ns`, `target_fps` | Baseline target metadata written by the generator; the actual build part comes from `--board` (see below). |
 | `model_kwargs` | Constructor arguments forwarded to the model class (ignored for `--onnx_file`). |
 | `build_script`, `baseline_timeout` | Legacy keys; the tuner uses `custom_builds/*_build.py` instead. |
 
@@ -308,6 +335,7 @@ validates the answer against the mathematical bounds before writing
 python custom_builds/<model>_build.py <model_dir> \
   --model-name <model.onnx> \
   --folding-config <config.json> \
+  [--fpga-part <xilinx_part>] \
   --estimate-only
 ```
 
@@ -327,7 +355,9 @@ DSE iterations.
 | `balanced` | minimize | Negated total throughput plus a weighted resource sum. |
 | `resource_avg` | minimize | Average LUT/DSP/BRAM/FF utilization. |
 
-In every case, configurations exceeding board capacity receive a penalty.
+In every case, configurations exceeding board capacity (per model, or summed
+across all models in a joint run) receive a penalty objective of `10000`, as do
+failed builds.
 
 ---
 
@@ -338,9 +368,12 @@ Resource budgets available to the AI tuner via `--board` (`helpers/boards.py`):
 `XC7S25`, `XC7S25-65`, `Zynq-7010`, `Zynq-7015`, `Zynq-7020`, `Zynq-7030`,
 `ZU3EG`, `U250`.
 
-`--board` only selects the budget used to score trials; it does not change the
-synthesis target. The actual `fpga_part` and clock are hardcoded in each
-`custom_builds/*_build.py` and must be edited to match. The `board` key in
+`--board` selects both the resource budget used to score trials and the synthesis
+target: the tuner passes the matching part from `BOARD_PARTS` in
+`helpers/boards.py` to the build script as `--fpga-part` (edit that table if your
+board uses a different package or speed grade, or pass `--fpga-part` yourself via
+`--extra_build_args`). The clock is still hardcoded in each
+`custom_builds/*_build.py`. The `board` key in
 `build_configs/*.json` is baseline metadata and is not validated against this
 list.
 
@@ -376,7 +409,12 @@ build_configs/cnv_w2a2_build_config.json`.
 
 The joint tuner writes final best configs for each model to its own
 `folding_config_best_<strategy>.json` under
-`dataset/config_files/<model>/`.
+`dataset/config_files/<model>/`. The best config is the lowest-objective
+**feasible** trial across all rounds. If no trial fits the board, nothing is
+saved and a warning is logged.
+
+After each round, the tuner prints a summary table with the objective, success
+flag, combined throughput and resource percentages, and per-model throughput.
 
 ---
 
@@ -397,6 +435,15 @@ The joint tuner writes final best configs for each model to its own
   metadata. Regenerate it with `generate_folding_config.py`.
 - **Slower-than-expected runs** — start with `--extra_build_args
   --estimate-only`; omit it only for full Vivado synthesis.
+- **Wrong part or package in synthesis** — edit `BOARD_PARTS` in
+  `helpers/boards.py`, or pass `--extra_build_args --fpga-part <part>`.
+- **"CSV has no columns for …" warning** — `trial_results.csv` was created with
+  a different parameter set (e.g. after regenerating the baseline). Rows are
+  appended under the existing header, so start a fresh CSV for the new space.
+  CSVs written before the column-alignment fix may hold values under the wrong
+  headers; delete them.
+- **Fewer CPUs than requested** — the tuner logs a warning and lowers the
+  per-trial CPU request to what Ray reports as available.
 
 There is no test suite, CI, lint, or formatter configuration. Verify changes
 with `--help`, a baseline generation run, and a FINN build (`--estimate-only`

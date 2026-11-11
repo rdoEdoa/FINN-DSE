@@ -5,7 +5,7 @@ import os
 import sys
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,7 +62,7 @@ def collect_metrics(finn_output_dir: str) -> Dict[str, float]:
                     
         if est_hls:
             for layer_name, counts in est_hls.items():
-                if isinstance(counts, dict):
+                if layer_name != "total" and isinstance(counts, dict):
                     combined_estimates[layer_name] = counts  # True overwrite!
 
         # Step B: Tally up the merged unique layers
@@ -101,10 +101,15 @@ def collect_metrics(finn_output_dir: str) -> Dict[str, float]:
 
     return metrics
 
-def get_warm_start_points(csv_path: str, new_space_json: str, max_points: int = 5) -> List[Dict[str, Any]]:
+_RESOURCE_COLS = {"lut": "LUT", "dsp": "DSP", "bram": "BRAM", "ff": "FF"}
+
+
+def get_warm_start_points(csv_path: str, new_space_json: str, max_points: int = 5,
+                          return_resources: bool = False) -> List[Any]:
     """
     Reads past trials, filters for successful builds, verifies they fit the new space,
     and returns ONLY the top N performing configurations to warm-start Optuna.
+    With return_resources=True, returns (params, {LUT, DSP, BRAM, FF}) tuples.
     """
     if not os.path.exists(csv_path) or not os.path.exists(new_space_json):
         return []
@@ -124,13 +129,13 @@ def get_warm_start_points(csv_path: str, new_space_json: str, max_points: int = 
                 trial_params = {}
                 is_legal = True
                 
-                # 2. Check if it's still legal
+                # 2. Check if it's still legal (a malformed cell skips only this row)
                 for param_name, valid_choices in new_space.items():
-                    if param_name not in row:
+                    try:
+                        past_val = int(row[param_name])
+                    except (KeyError, TypeError, ValueError):
                         is_legal = False
                         break
-                    
-                    past_val = int(row[param_name])
                     if past_val in valid_choices:
                         trial_params[param_name] = past_val
                     else:
@@ -140,21 +145,37 @@ def get_warm_start_points(csv_path: str, new_space_json: str, max_points: int = 
                 # 3. Save both the params and the objective score
                 if is_legal:
                     # Look for objective, default to a massive penalty if missing
-                    obj_val = float(row.get('objective', 1e9))
-                    valid_trials.append({'params': trial_params, 'objective': obj_val})
-                    
+                    try:
+                        obj_val = float(row.get('objective') or 1e9)
+                    except ValueError:
+                        obj_val = 1e9
+                    resources = {}
+                    for col, dev_key in _RESOURCE_COLS.items():
+                        try:
+                            resources[dev_key] = float(row.get(col) or 0)
+                        except ValueError:
+                            resources[dev_key] = 0.0
+                    valid_trials.append({'params': trial_params, 'objective': obj_val,
+                                         'resources': resources})
+
     except Exception as e:
         log.warning("Could not load warm start points: %s", e)
-        
+
     # Sort the trials by best objective (lowest is better)
     valid_trials.sort(key=lambda x: x['objective'])
-    
-    # Extract just the parameter dictionaries for the top N trials
-    warm_start_points = [t['params'] for t in valid_trials[:max_points]]
-    
-    return warm_start_points
+    top = valid_trials[:max_points]
 
-def get_joint_warm_start_points(models: Dict[str, Dict[str, Any]], max_points: int = 5) -> List[Dict[str, Any]]:
+    if return_resources:
+        return [(t['params'], t['resources']) for t in top]
+    # Extract just the parameter dictionaries for the top N trials
+    return [t['params'] for t in top]
+
+def get_joint_warm_start_points(
+    models: Dict[str, Dict[str, Any]],
+    max_points: int = 5,
+    device: Optional[Mapping[str, float]] = None,
+    instance_counts: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
     """
     Build warm-start points for the JOINT space by combining each model's own
     best-so-far legal points, paired by rank (best-with-best, 2nd-best-with-
@@ -163,10 +184,16 @@ def get_joint_warm_start_points(models: Dict[str, Dict[str, Any]], max_points: i
     ALL models have a point at that rank — models with fewer warm-start
     points simply limit how many joint combos can be formed, rather than
     producing partial (invalid) combos.
+
+    If `device` is given, combos whose SUMMED resources (each model weighted
+    by its instance count) exceed the board are dropped, since each model
+    fitting on its own does not mean they fit together.
     """
-    per_model_points: Dict[str, List[Dict[str, Any]]] = {}
+    instance_counts = instance_counts or {}
+    per_model_points: Dict[str, List[Any]] = {}
     for ms, m in models.items():
-        pts = get_warm_start_points(m["results_csv"], m["pruned_space_path"], max_points=max_points)
+        pts = get_warm_start_points(m["results_csv"], m["pruned_space_path"],
+                                    max_points=max_points, return_resources=True)
         per_model_points[ms] = pts
 
     if not per_model_points or any(len(pts) == 0 for pts in per_model_points.values()):
@@ -182,9 +209,20 @@ def get_joint_warm_start_points(models: Dict[str, Dict[str, Any]], max_points: i
     joint_points = []
     for i in range(n_combos):
         combo = {}
+        totals = {dev_key: 0.0 for dev_key in _RESOURCE_COLS.values()}
         for ms, pts in per_model_points.items():
-            for k, v in pts[i].items():
+            params, resources = pts[i]
+            for k, v in params.items():
                 combo[f"{ms}::{k}"] = v
+            for dev_key, val in resources.items():
+                totals[dev_key] += val * instance_counts.get(ms, 1)
+
+        if device is not None:
+            over = [k for k, v in totals.items() if device.get(k) and v > device[k]]
+            if over:
+                log.info("Dropping joint warm-start combo #%d: combined %s exceed the board.",
+                         i, over)
+                continue
         joint_points.append(combo)
 
     return joint_points

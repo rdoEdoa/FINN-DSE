@@ -22,6 +22,20 @@ BOARDS: Dict[str, Dict[str, int]] = {
     "U250":      {"LUT": 1727040, "DSP": 12288, "BRAM": 2688, "FF": 3454080},
 }
 
+# Xilinx part passed to the build scripts (--fpga-part) so synthesis targets the
+# same device the resource budget describes. The package/speed grade is the
+# one of a common dev board for that device; edit it to match your hardware.
+BOARD_PARTS: Dict[str, str] = {
+    "XC7S25":    "xc7s25csga324-1",
+    "XC7S25-65": "xc7s25csga324-1",
+    "Zynq-7010": "xc7z010clg400-1",
+    "Zynq-7015": "xc7z015clg485-1",
+    "Zynq-7020": "xc7z020clg400-1",
+    "Zynq-7030": "xc7z030sbg485-1",
+    "ZU3EG":     "xczu3eg-sbva484-1-e",
+    "U250":      "xcu250-figd2104-2L-e",
+}
+
 # Board used when --board is not given (the one that was active in the scripts)
 DEFAULT_BOARD = "Zynq-7015"
 

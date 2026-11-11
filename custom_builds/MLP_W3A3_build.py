@@ -53,7 +53,7 @@ def get_build_steps(estimate_only=False):
         ])
     return steps
 
-def create_build_config(output_dir, folding_config_path, estimate_only=False):
+def create_build_config(output_dir, folding_config_path, estimate_only=False, fpga_part="xc7z020clg400-1"):
     """Creates and configures the DataflowBuildConfig"""
     outputs = [DataflowOutputType.ESTIMATE_REPORTS]
     if not estimate_only:
@@ -70,7 +70,7 @@ def create_build_config(output_dir, folding_config_path, estimate_only=False):
         hls_clk_period_ns=10.0,
         folding_config_file=folding_config_path,
         auto_fifo_depths=False,
-        fpga_part="xc7z020clg400-1",
+        fpga_part=fpga_part,
         mvau_wwidth_max=256,
         split_large_fifos=True,
         enable_build_pdb_debug=True,
@@ -169,6 +169,7 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='Detailed output log')
     parser.add_argument('--folding-config', '-fc', default='config_00000.json', help='Set the folding configuration file name')
     parser.add_argument('--estimate-only', action='store_true', help='Run only up to analytical estimations, skip Vivado synthesis')
+    parser.add_argument('--fpga-part', default="xc7z020clg400-1", help='Xilinx part to target (passed by the optimizer from --board)')
     args = parser.parse_args()
     
     model_directory = os.path.join("dataset", args.directory)
@@ -203,7 +204,7 @@ def main():
         print("Loading the model...")
         model = ModelWrapper(model_file)
         print("Create build configuration...")
-        cfg = create_build_config(output_dir, folding_config_path, estimate_only=args.estimate_only)
+        cfg = create_build_config(output_dir, folding_config_path, estimate_only=args.estimate_only, fpga_part=args.fpga_part)
         build_steps = get_build_steps(estimate_only=args.estimate_only)
         print("=" * 50)
         
@@ -214,7 +215,6 @@ def main():
             print("Synthesis/Estimation executed successfully!")
         else:
             print("Build failed!")
-            collect_reports_and_cleanup(output_dir)
             sys.exit(1)
             
     except Exception as e:

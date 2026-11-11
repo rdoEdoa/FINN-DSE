@@ -5,9 +5,9 @@ FINN folding-config tuner with adaptive LLM-based design space pruning.
 
 Extends finn_raytune_optimizer.py with:
   - A running CSV of all trial results (trial_params + metrics).
-  - The search algorithm (Optuna/Nevergrad/Random) is NOT interrupted:
-    Optuna resumes from its persistent study; Nevergrad/Random restart
-    their sampling from the new restricted space.
+  - Each round starts a fresh search (a new Optuna study per round, stored
+    in the same SQLite DB) over the new restricted space, warm-started with
+    the best past configurations that are still legal in that space.
 
 Workflow
 ────────
@@ -34,6 +34,7 @@ Usage
 
 import argparse
 import csv
+import hashlib
 import json
 import logging
 import os
@@ -49,7 +50,7 @@ from ray.tune.search import ConcurrencyLimiter
 from ray.tune.search.optuna import OptunaSearch
 
 # Import the custom helpers
-from helpers.boards import BOARDS, DEFAULT_BOARD, board_arg
+from helpers.boards import BOARDS, BOARD_PARTS, DEFAULT_BOARD, board_arg
 from helpers.metrics import get_joint_warm_start_points
 from helpers.trials import _append_to_csv, _dedup_model_keys
 from helpers.trainable import make_joint_trainable
@@ -126,10 +127,11 @@ def build_search_alg(
             study_name         = study_name,
             metric             = "objective",
             mode               = "min",
-            points_to_evaluate = warm_start_points, 
+            points_to_evaluate = warm_start_points,
+            sampler            = optuna.samplers.TPESampler(seed=seed),
         )
         search_alg = ConcurrencyLimiter(search_alg, max_concurrent=max_concurrent)
-        log.info("Search: Optuna (isolated study) — max_concurrent=%d", max_concurrent)
+        log.info("Search: Optuna (isolated study) — seed=%d, max_concurrent=%d", seed, max_concurrent)
 
     elif strategy == "nevergrad":
         import nevergrad
@@ -188,9 +190,12 @@ def print_trial_summary(analysis) -> None:
         return
     if df is None or df.empty:
         return
-    cols = [c for c in ["objective", "lut", "bram", "dsp", "ff",
-                        "fmax_mhz", "throughput_fps", "build_success"]
-            if c in df.columns]
+    # The joint trainable reports combined_* totals and per-model <key>__<metric>
+    preferred = ["objective", "build_success", "combined_throughput_fps",
+                 "combined_lut_pct", "combined_bram_pct", "combined_dsp_pct",
+                 "combined_ff_pct"]
+    cols = [c for c in preferred if c in df.columns]
+    cols += [c for c in df.columns if c.endswith("__throughput_fps") and c not in cols]
     if not cols:
         return
     sort_col = "objective" if "objective" in df.columns else cols[0]
@@ -263,6 +268,13 @@ def main():
 
     DEVICE.update(BOARDS[args.board])
     log.info("Target board: %s  %s", args.board, DEVICE)
+
+    # Synthesise for the same device the resource budget describes, unless
+    # the user already chose a part via --extra_build_args.
+    if "--fpga-part" not in args.extra_build_args and args.board in BOARD_PARTS:
+        args.extra_build_args = list(args.extra_build_args) + [
+            "--fpga-part", BOARD_PARTS[args.board]]
+        log.info("FPGA part: %s", BOARD_PARTS[args.board])
 
     base_model_names = args.model
     model_keys  = _dedup_model_keys(base_model_names)
@@ -372,6 +384,14 @@ def main():
     
     ray.init(address=args.ray_address, ignore_reinit_error=True)
 
+    # A trial requesting more CPUs than the cluster has is never scheduled
+    # (Ray just waits), so cap the request at what is available.
+    cluster_cpus = int(ray.cluster_resources().get("CPU", 1))
+    cpus_per_trial = max(1, min(2 * len(rep_models), cluster_cpus))
+    if cpus_per_trial < 2 * len(rep_models):
+        log.warning("Only %d CPUs available — requesting %d per trial instead of %d.",
+                    cluster_cpus, cpus_per_trial, 2 * len(rep_models))
+
     # ── Determine pruning schedule ─────────────────────────────────────────
     try:
         epoch_schedule = [int(x.strip()) for x in args.epoch_schedule.split(',')]
@@ -392,6 +412,7 @@ def main():
     
     # ── Round-based execution loop ─────────────────────────────────────────
     experiment_name = f"finn_tune_{args.search_strategy}_{args.objective}"
+    best_overall: Optional[tuple] = None   # (objective, flat joint config)
 
     for round_samples in epoch_schedule:
         log.info("═══ Round %d | JOINT trial across %d models × %d samples ═══",
@@ -404,7 +425,8 @@ def main():
         if args.search_strategy == "optuna":
             current_study_name = f"finn_joint_{combo_id}_run{args.run_id}_round{pruning_round}"
 
-        warm_start_points = get_joint_warm_start_points(rep_models)
+        warm_start_points = get_joint_warm_start_points(
+            rep_models, device=DEVICE, instance_counts=instance_counts)
         if warm_start_points:
             log.info("Warm-starting joint search with %d combined points.", len(warm_start_points))
 
@@ -425,6 +447,7 @@ def main():
             joint_root=joint_root,
             single_network=single_network,
             device=DEVICE,
+            combo_tag="" if single_network else "J" + hashlib.md5(combo_id.encode()).hexdigest()[:6],
         )
 
         round_name = f"{experiment_name}_JOINT_round{pruning_round:02d}"
@@ -443,11 +466,23 @@ def main():
             num_samples=round_samples, search_alg=search_alg,
             progress_reporter=reporter, storage_path=args.raytune_dir,
             name=round_name, verbose=1, raise_on_failed_trial=False,
-            resources_per_trial={"cpu": 2 * len(rep_models), "gpu": 0},
+            resources_per_trial={"cpu": cpus_per_trial, "gpu": 0},
         )
 
         print_trial_summary(analysis)
-        joint_last_analysis = analysis   # single shared analysis, not per-model
+
+        # Track the best feasible config across ALL rounds, not just the last.
+        try:
+            best_trial = analysis.get_best_trial(metric="objective", mode="min")
+        except Exception as exc:
+            log.warning("Could not retrieve best trial for round %d: %s", pruning_round, exc)
+            best_trial = None
+        if best_trial is not None:
+            round_obj = (best_trial.last_result or {}).get("objective")
+            if (round_obj is not None and round_obj < PENALTY_HARD
+                    and (best_overall is None or round_obj < best_overall[0])):
+                best_overall = (round_obj, dict(best_trial.config))
+                log.info("New overall best: objective=%.4g (round %d)", round_obj, pruning_round)
 
         trials_done   += round_samples
         pruning_round += 1
@@ -472,13 +507,11 @@ def main():
                         json.dump(safe_space, f, indent=2)
 
     # ── Save final best config ─────────────────────────────────────────────
-    if 'joint_last_analysis' in dir() and joint_last_analysis:
-        try:
-            best_params = joint_last_analysis.get_best_config(metric="objective", mode="min")
-        except Exception as exc:
-            log.warning("Could not retrieve joint best config: %s", exc)
-            best_params = None
-
+    if best_overall is None:
+        log.warning("No feasible configuration found in any round — no best config saved.")
+    else:
+        best_params = best_overall[1]
+        log.info("Overall best objective: %.4g", best_overall[0])
         if best_params:
             per_model_best: Dict[str, Dict[str, Any]] = {ms: {} for ms in representative_keys}   
             for key, value in best_params.items():

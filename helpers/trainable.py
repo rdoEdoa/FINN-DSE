@@ -12,7 +12,6 @@ from ray import tune
 
 from helpers.metrics import collect_metrics
 from helpers.objectives import (
-    PENALTY,
     PENALTY_HARD,
     compute_objective,
     compute_joint_objective,
@@ -45,7 +44,13 @@ def make_joint_trainable(
     joint_root: str,
     device: Mapping[str, float],
     single_network: bool = False,
+    combo_tag: str = "",
 ):
+    # combo_tag keeps file names unique per model combination: the trial
+    # counter lives in joint_root, so two combos would otherwise both produce
+    # e.g. optuna_cnv_w1a1_config_0000 and overwrite each other's results.
+    name_prefix = f"{search_strategy}_{combo_tag}_" if combo_tag else f"{search_strategy}_"
+
     def trainable(trial_config: Dict[str, Any]):
         import os, json, shutil, logging
         logging.basicConfig(level=logging.INFO)
@@ -64,7 +69,7 @@ def make_joint_trainable(
             m = models[ms]
             patched_cfg = patch_folding_config(m["baseline"], per_model_params[ms])
 
-            cfg_filename  = f"{search_strategy}_{ms}_{trial_name}.json"
+            cfg_filename  = f"{name_prefix}{ms}_{trial_name}.json"
             cfg_finn_path = os.path.join(
                 m["dataset_root"], "dataset", "config_files", m["onnx_stem"], cfg_filename
             )
@@ -117,13 +122,16 @@ def make_joint_trainable(
             m_obj = (
                 compute_objective(r["metrics"], objective, device)
                 if r["success"]
-                else PENALTY
+                else PENALTY_HARD
             )
+            # Over-capacity builds count as failures (same rule as the
+            # feasibility check), so the LLM / guardrail / warm-start agree.
+            m_success = r["success"] and m_obj < PENALTY_HARD
             _append_to_csv(models[ms]["results_csv"], trial_name, per_model_params[ms],
-                           r["metrics"], m_obj, r["success"], device=device)
-            for sib_key in duplicate_siblings.get(ms, []):       
+                           r["metrics"], m_obj, m_success, device=device)
+            for sib_key in duplicate_siblings.get(ms, []):
                 _append_to_csv(all_models[sib_key]["results_csv"], trial_name,
-                               per_model_params[ms], r["metrics"], m_obj, r["success"], device=device)
+                               per_model_params[ms], r["metrics"], m_obj, m_success, device=device)
 
         # ── Joint objective across all models, summing resources ──────────
         obj_value, breakdown = compute_joint_objective(

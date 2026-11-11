@@ -146,7 +146,7 @@ def load_results_summary(
 
     # 1. Output a condensed table for general trends
     param_keys = [k for k in recent[0].keys() if "__PE" in k or "__SIMD" in k]
-    metric_keys = ["success", "throughput_fps", "lut_pct", "bram_pct", "dsp_pct", "objective"]
+    metric_keys = ["build_success", "throughput_fps", "lut_pct", "bram_pct", "dsp_pct", "objective"]
     metric_keys = [k for k in metric_keys if k in recent[0]]
 
     # We will still truncate the visual table to save tokens, but we will pass the exact best params below
@@ -190,17 +190,19 @@ def load_results_summary(
 
 def safe_json_parse(content: str) -> dict:
     """
-    Parse LLM JSON output defensively. Falls back to a repair pass if the
-    model emitted literal control characters (e.g. raw newlines) inside
-    string values, which some reasoning models do despite JSON mode.
+    Parse LLM JSON output defensively. strict=False already tolerates raw
+    control characters inside strings; if parsing still fails (e.g. the
+    model wrapped the JSON in code fences or prose), fall back to the
+    outermost {...} block.
     """
     try:
         return json.loads(content, strict=False)
     except json.JSONDecodeError as e:
-        log.warning("JSON parse failed (%s), attempting repair…", e)
-        repaired = re.sub(r'(?<!\\)\n', '\\n', content)
-        repaired = re.sub(r'(?<!\\)\t', '\\t', content)
-        return json.loads(repaired, strict=False)
+        log.warning("JSON parse failed (%s), extracting outermost {...} block…", e)
+        start, end = content.find("{"), content.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(content[start:end + 1], strict=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM prompt
@@ -215,10 +217,10 @@ def prompt_agent(
     results_summary: Optional[str],
     pruning_round: int,
     model: str,
-) -> Tuple[dict, str]:
+) -> Tuple[dict, str, dict]:
     """
     Send the pruning request to the LLM.
-    Returns (pruned_space_dict, reasoning_text).
+    Returns (pruned_space_dict, reasoning_text, token_usage).
     """
     board  = build_cfg.get("board",     "Unknown")
     fpga   = build_cfg.get("fpga_part", "Unknown")

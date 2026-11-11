@@ -28,7 +28,7 @@ This matches exactly what full_build.py expects.
 Usage
 ─────
     python generate_folding_config.py \
-        --model_file  models/cnv_w2a2.py \
+        --model_file  models/cnv.py \
         --model_class CNV     \
         --config      build_configs/cnv_w2a2_build_config.json
 
@@ -99,9 +99,10 @@ def load_build_config(config_path: Optional[str]) -> Dict[str, Any]:
     cfg = dict(CONFIG_DEFAULTS)
     if config_path is None:
         log.info("No --config provided — using defaults.")
-        with open("build_config.template.json", "w") as f:
-            json.dump(TEMPLATE_CONFIG, f, indent=2)
-        log.info("Template written to build_config.template.json")
+        if not os.path.exists("build_config.template.json"):
+            with open("build_config.template.json", "w") as f:
+                json.dump(TEMPLATE_CONFIG, f, indent=2)
+            log.info("Template written to build_config.template.json")
         return cfg
     with open(config_path) as f:
         user_cfg = json.load(f)
@@ -402,36 +403,57 @@ def stage_onnx_into_dataset(onnx_src: str, build_cfg: Dict[str, Any]) -> str:
         log.info("Copied ONNX: %s -> %s", src, dest)
     return str(dest)
 
-def _find_weights(start_tensor_name, initializer_map, producer_map, max_depth=6):
-    """Walk backwards from a tensor name to find the weight initializer."""
-    queue   = [(start_tensor_name, 0)]
+def _find_weights(start_tensor_name, initializer_map, producer_map, max_depth=6,
+                  return_transposes=False):
+    """Walk backwards from a tensor name to find the weight initializer.
+
+    With return_transposes=True, also returns how many Transpose nodes lie
+    between the initializer and the start tensor (Brevitas exports Linear
+    weights as an [out, in] initializer followed by a Transpose).
+    """
+    queue   = [(start_tensor_name, 0, 0)]
     visited = set()
     while queue:
-        curr_name, depth = queue.pop(0)
+        curr_name, depth, n_transpose = queue.pop(0)
         if depth > max_depth or curr_name in visited:
             continue
         visited.add(curr_name)
         if curr_name in initializer_map:
             w = numpy_helper.to_array(initializer_map[curr_name])
             if len(w.shape) == 4 or (len(w.shape) == 2 and w.shape[0] > 1):
-                return w
+                return (w, n_transpose) if return_transposes else w
         if curr_name in producer_map:
-            for inp in producer_map[curr_name].input:
-                queue.append((inp, depth + 1))
-    return None
+            producer = producer_map[curr_name]
+            step = 1 if producer.op_type == "Transpose" else 0
+            for inp in producer.input:
+                queue.append((inp, depth + 1, n_transpose + step))
+    return (None, 0) if return_transposes else None
 
 def _get_mh_mw(node, initializer_map, producer_map):
     """Return (MH, MW) for a Conv/MatMul/Gemm node from its weight tensor."""
     mh, mw = 1, 1
     if len(node.input) > 1:
-        w = _find_weights(node.input[1], initializer_map, producer_map)
+        w, n_transpose = _find_weights(node.input[1], initializer_map, producer_map,
+                                       return_transposes=True)
         if w is not None:
             if len(w.shape) == 4:           # Conv: [OC, IC, KH, KW]
                 mh = w.shape[0]
                 mw = w.shape[1] * w.shape[2] * w.shape[3]
-            elif len(w.shape) == 2:         # MatMul/Gemm: [out, in]
-                mh = w.shape[0]
-                mw = w.shape[1]
+            elif len(w.shape) == 2:
+                # Shape of the weight as the node actually receives it: an odd
+                # number of Transposes on the path flips the initializer.
+                rows, cols = w.shape if n_transpose % 2 == 0 else w.shape[::-1]
+                # MatMul (and Gemm with transB=0): Y = X @ W, W is [in, out].
+                # Gemm with transB=1: W is [out, in]. FINN: MW = in, MH = out.
+                trans_b = 0
+                if node.op_type == "Gemm":
+                    for attr in node.attribute:
+                        if attr.name == "transB":
+                            trans_b = attr.i
+                if trans_b:
+                    mh, mw = rows, cols
+                else:
+                    mw, mh = rows, cols
     return max(1, mh), max(1, mw)
 
 
